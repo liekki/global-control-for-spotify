@@ -109,6 +109,8 @@ class TrayApp : ApplicationContext
     void OnHotkey(int command)
     {
         if (command == Config.JumpCommand) ToggleJump();
+        else if (command == Config.VolumeUpCommand) SpotifyVolume.Change(+SpotifyVolume.Step);
+        else if (command == Config.VolumeDownCommand) SpotifyVolume.Change(-SpotifyVolume.Step);
         else Spotify.Send(command);
     }
 
@@ -182,7 +184,7 @@ class TrayApp : ApplicationContext
             string name = Config.Names[i], text = hotkeys[name];
             int command = Config.Commands[i];
             uint mods; Keys key;
-            if (Config.Parse(text, out mods, out key) && !window.Register(i + 1, mods, key, command))
+            if (Config.Parse(text, out mods, out key) && !window.Register(i + 1, mods, key, command, Config.Repeats(command)))
                 failed.Add(Config.Label(name) + " (" + text + ")");
 
             var item = new ToolStripMenuItem(command == Config.JumpCommand ? "Jump..." : Config.Label(name), null, delegate { OnHotkey(command); });
@@ -455,9 +457,10 @@ class HotkeyWindow : NativeWindow
 
     public HotkeyWindow() { CreateHandle(new CreateParams()); }
 
-    public bool Register(int id, uint modifiers, Keys key, int command)
+    // repeat: keep firing while the keys are held (volume); otherwise once per press.
+    public bool Register(int id, uint modifiers, Keys key, int command, bool repeat)
     {
-        if (!RegisterHotKey(Handle, id, modifiers | MOD_NOREPEAT, (uint)key)) return false;
+        if (!RegisterHotKey(Handle, id, modifiers | (repeat ? 0 : MOD_NOREPEAT), (uint)key)) return false;
         commands[id] = command;
         return true;
     }
@@ -474,6 +477,109 @@ class HotkeyWindow : NativeWindow
         if (m.Msg == WM_HOTKEY && commands.TryGetValue(m.WParam.ToInt32(), out command) && Pressed != null)
             Pressed(command);
         base.WndProc(ref m);
+    }
+}
+
+// Spotify's own volume, as set in the Windows volume mixer (Core Audio's per-app session volume).
+// Doesn't touch the system volume or Spotify's window, and works without Jump's debugging port.
+static class SpotifyVolume
+{
+    public const float Step = 0.05f;
+
+    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator { }
+
+    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDeviceEnumerator
+    {
+        int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
+        [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
+    }
+
+    [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDevice
+    {
+        [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object instance);
+    }
+
+    [ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioSessionManager2
+    {
+        int GetAudioSessionControl(IntPtr groupingParam, int flags, out IntPtr control);
+        int GetSimpleAudioVolume(IntPtr groupingParam, int flags, out IntPtr volume);
+        [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator sessions);
+    }
+
+    [ComImport, Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioSessionEnumerator
+    {
+        [PreserveSig] int GetCount(out int count);
+        [PreserveSig] int GetSession(int index, out IAudioSessionControl2 session);
+    }
+
+    [ComImport, Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioSessionControl2
+    {
+        // IAudioSessionControl, unused here but needed for the vtable order
+        int GetState(out int state);
+        int GetDisplayName(out IntPtr name);
+        int SetDisplayName(IntPtr name, IntPtr context);
+        int GetIconPath(out IntPtr path);
+        int SetIconPath(IntPtr path, IntPtr context);
+        int GetGroupingParam(out Guid param);
+        int SetGroupingParam(IntPtr param, IntPtr context);
+        int RegisterAudioSessionNotification(IntPtr client);
+        int UnregisterAudioSessionNotification(IntPtr client);
+        // IAudioSessionControl2
+        int GetSessionIdentifier(out IntPtr id);
+        int GetSessionInstanceIdentifier(out IntPtr id);
+        [PreserveSig] int GetProcessId(out uint pid);
+    }
+
+    [ComImport, Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ISimpleAudioVolume
+    {
+        [PreserveSig] int SetMasterVolume(float level, ref Guid context);
+        [PreserveSig] int GetMasterVolume(out float level);
+    }
+
+    // Changes every Spotify audio session on the default output by delta (0..1 scale). Returns the new
+    // level, or -1 if Spotify has no audio session (not running, or hasn't played anything yet).
+    public static float Change(float delta)
+    {
+        var pids = new HashSet<uint>();
+        foreach (var p in Process.GetProcessesByName("Spotify")) { pids.Add((uint)p.Id); p.Dispose(); }
+        if (pids.Count == 0) return -1;
+
+        float result = -1;
+        try
+        {
+            var devices = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+            IMMDevice speakers;
+            if (devices.GetDefaultAudioEndpoint(0 /* eRender */, 1 /* eMultimedia */, out speakers) != 0) return -1;
+            Guid managerId = typeof(IAudioSessionManager2).GUID;
+            object manager;
+            if (speakers.Activate(ref managerId, 23 /* CLSCTX_ALL */, IntPtr.Zero, out manager) != 0) return -1;
+            IAudioSessionEnumerator sessions;
+            if (((IAudioSessionManager2)manager).GetSessionEnumerator(out sessions) != 0) return -1;
+            int count;
+            sessions.GetCount(out count);
+            for (int i = 0; i < count; i++)
+            {
+                IAudioSessionControl2 session;
+                uint pid;
+                if (sessions.GetSession(i, out session) != 0 || session.GetProcessId(out pid) != 0 || !pids.Contains(pid)) continue;
+                var volume = (ISimpleAudioVolume)session;
+                float level;
+                volume.GetMasterVolume(out level);
+                level = Math.Max(0f, Math.Min(1f, (float)Math.Round((level + delta) / Step) * Step));
+                Guid context = Guid.Empty;
+                volume.SetMasterVolume(level, ref context);
+                result = level;
+            }
+        }
+        catch (COMException) { } // no audio device
+        catch (InvalidCastException) { }
+        return result;
     }
 }
 
@@ -545,10 +651,14 @@ static class Config
 {
     const uint MOD_ALT = 1, MOD_CONTROL = 2, MOD_SHIFT = 4, MOD_WIN = 8;
 
-    public const int JumpCommand = -1; // handled by this app itself, never sent to Spotify
-    public static readonly string[] Names = { "PlayPause", "Next", "Previous", "Jump" };
-    public static readonly string[] Defaults = { "Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z", "Ctrl+Shift+J" }; // Winamp's classic hotkeys
-    public static readonly int[] Commands = { Spotify.PlayPause, Spotify.NextTrack, Spotify.PreviousTrack, JumpCommand };
+    // Handled by this app itself, never sent to Spotify as such.
+    public const int JumpCommand = -1, VolumeUpCommand = -2, VolumeDownCommand = -3;
+    public static readonly string[] Names = { "PlayPause", "Next", "Previous", "Jump", "VolumeUp", "VolumeDown" };
+    public static readonly string[] Defaults = { "Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z", "Ctrl+Shift+J", // Winamp's classic hotkeys
+        "Ctrl+Shift+PageUp", "Ctrl+Shift+PageDown" };
+    public static readonly int[] Commands = { Spotify.PlayPause, Spotify.NextTrack, Spotify.PreviousTrack, JumpCommand, VolumeUpCommand, VolumeDownCommand };
+
+    public static bool Repeats(int command) { return command == VolumeUpCommand || command == VolumeDownCommand; }
     public const string StartWithWindows = "StartWithWindows";
     public const string StartSpotify = "StartSpotify";
 
@@ -602,7 +712,16 @@ static class Config
         return result;
     }
 
-    public static string Label(string name) { return name == "PlayPause" ? "Play/Pause" : name; }
+    public static string Label(string name)
+    {
+        switch (name)
+        {
+            case "PlayPause": return "Play/Pause";
+            case "VolumeUp": return "Volume up";
+            case "VolumeDown": return "Volume down";
+            default: return name;
+        }
+    }
 
     public static void Save(string path, Dictionary<string, string> hotkeys)
     {
@@ -626,7 +745,8 @@ static class Config
         if ((modifiers & Keys.Alt) != 0) parts.Add("Alt");
         if ((modifiers & Keys.Shift) != 0) parts.Add("Shift");
         if (win) parts.Add("Win");
-        parts.Add(key == Keys.None ? "" : key.ToString());
+        // Keys.PageUp/PageDown share their values with Prior/Next, which ToString() may pick.
+        parts.Add(key == Keys.None ? "" : key == Keys.PageUp ? "PageUp" : key == Keys.PageDown ? "PageDown" : key.ToString());
         return string.Join("+", parts.ToArray());
     }
 

@@ -26,8 +26,11 @@ Windows SmartScreen may warn about an unrecognized app the first time, since the
 | Next       | `Ctrl+Shift+B` |
 | Previous   | `Ctrl+Shift+Z` |
 | Jump       | `Ctrl+Shift+J` |
+| Volume up / down | `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` |
 
-These are Winamp's classic global hotkeys. Note that they take over the same keys in other apps while Spotify Global Hotkeys is running — for example Redo (`Ctrl+Shift+Z`) in many editors, and the element inspector (`Ctrl+Shift+C`) and bookmarks bar (`Ctrl+Shift+B`) in Chrome and Edge. Change them in Settings if that gets in your way.
+Volume changes Spotify's own volume, not your system's: on Windows Spotify's slider in the volume mixer, in 5% steps (hold the keys to keep going); on macOS Spotify's volume slider, in steps of 10. It works without Jump's setup.
+
+The play/pause, next and previous keys are Winamp's classic global hotkeys. Note that they take over the same keys in other apps while Spotify Global Hotkeys is running — for example Redo (`Ctrl+Shift+Z`) in many editors, and the element inspector (`Ctrl+Shift+C`) and bookmarks bar (`Ctrl+Shift+B`) in Chrome and Edge. Change them in Settings if that gets in your way.
 
 ## Changing hotkeys
 
@@ -44,6 +47,8 @@ PlayPause=Ctrl+Shift+C
 Next=Ctrl+Shift+B
 Previous=Ctrl+Shift+Z
 Jump=Ctrl+Shift+J
+VolumeUp=Ctrl+Shift+PageUp
+VolumeDown=Ctrl+Shift+PageDown
 
 ; true or false: launch Spotify Global Hotkeys when you log in to Windows.
 StartWithWindows=true
@@ -86,7 +91,7 @@ Requires macOS 13 (Ventura) or later, on Apple silicon or Intel.
 2. The app isn't notarized by Apple, so the first time, **right-click Spotify Global Hotkeys.app → Open** and confirm. (On newer macOS versions, if there's no Open button: try to open it once, then go to System Settings → Privacy & Security and click **Open Anyway**.) Or [build it yourself](#building-on-macos).
 3. Spotify Global Hotkeys appears in the menu bar (no Dock icon). The first time you press a hotkey while Spotify is running, macOS asks whether Spotify Global Hotkeys may control Spotify — choose **Allow**. If you said no, turn it back on in System Settings → Privacy & Security → Automation → Spotify Global Hotkeys.
 
-The default hotkeys are the same as on Windows: `⌃⇧C` (Ctrl+Shift+C) play/pause, `⌃⇧B` next, `⌃⇧Z` previous. Mac apps use Cmd for their shortcuts, so these rarely get in the way.
+The default hotkeys are the same as on Windows: `⌃⇧C` (Ctrl+Shift+C) play/pause, `⌃⇧B` next, `⌃⇧Z` previous, `⌃⇧⇞` / `⌃⇧⇟` (Ctrl+Shift+Page Up/Down) volume. Mac apps use Cmd for their shortcuts, so these rarely get in the way.
 
 **Don't see the icon?** On MacBooks with a notch, macOS hides menu bar icons that don't fit to the left of the notch, and new apps are the first to go. Open Spotify Global Hotkeys.app again (from Spotlight or Finder) to bring up its Settings. To make room, hide some icons you don't need (System Settings → Control Centre, or the other apps' own settings), or use a menu bar manager such as [Ice](https://github.com/jordanbaird/Ice). Once Spotify Global Hotkeys is visible, ⌘-drag it further right so it stays visible.
 
@@ -98,6 +103,8 @@ Settings live in `~/Library/Application Support/Spotify Global Hotkeys/SpotifyGl
 PlayPause=Ctrl+Shift+C
 Next=Ctrl+Shift+B
 Previous=Ctrl+Shift+Z
+VolumeUp=Ctrl+Shift+PageUp
+VolumeDown=Ctrl+Shift+PageDown
 
 ; true or false: launch Spotify Global Hotkeys when you log in.
 StartAtLogin=true

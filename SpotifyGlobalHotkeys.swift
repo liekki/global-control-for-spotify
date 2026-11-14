@@ -9,12 +9,14 @@ import ServiceManagement
 // MARK: - Actions and hotkey text
 
 enum Action: Int, CaseIterable {
-    case playPause, next, previous
+    case playPause, next, previous, volumeUp, volumeDown
 
-    var key: String { ["PlayPause", "Next", "Previous"][rawValue] }
-    var label: String { ["Play/Pause", "Next", "Previous"][rawValue] }
-    var defaultHotkey: String { ["Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z"][rawValue] } // Winamp's classic hotkeys
-    var spotifyEvent: String { ["PlPs", "Next", "Prev"][rawValue] } // from Spotify's scripting dictionary
+    var key: String { ["PlayPause", "Next", "Previous", "VolumeUp", "VolumeDown"][rawValue] }
+    var label: String { ["Play/Pause", "Next", "Previous", "Volume up", "Volume down"][rawValue] }
+    // Winamp's classic hotkeys, plus Page Up/Down for volume
+    var defaultHotkey: String { ["Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z", "Ctrl+Shift+PageUp", "Ctrl+Shift+PageDown"][rawValue] }
+    var spotifyEvent: String { ["PlPs", "Next", "Prev", "", ""][rawValue] } // from Spotify's scripting dictionary
+    var volumeDelta: Int? { [nil, nil, nil, 10, -10][rawValue] } // Spotify's sound volume is 0...100
 }
 
 struct Hotkey: Equatable {
@@ -244,6 +246,7 @@ enum Spotify {
     // Does nothing if Spotify isn't running, so a hotkey never launches it.
     static func send(_ action: Action) {
         guard isRunning else { return }
+        if let delta = action.volumeDelta { changeVolume(by: delta); return }
         // Off the main thread: the first send waits for the user to answer macOS's "control Spotify" prompt.
         queue.async {
             let target = NSAppleEventDescriptor(bundleIdentifier: bundleID)
@@ -257,6 +260,25 @@ enum Spotify {
             let event = NSAppleEventDescriptor(eventClass: eventClass, eventID: eventID, targetDescriptor: target,
                                                returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
             _ = try? event.sendEvent(options: [.noReply], timeout: 2)
+        }
+    }
+
+    // Spotify's own volume (its "sound volume" property), not the Mac's output volume.
+    static func changeVolume(by delta: Int) {
+        queue.async {
+            let source = """
+                tell application id "\(bundleID)"
+                    set v to (sound volume) + (\(delta))
+                    if v > 100 then set v to 100
+                    if v < 0 then set v to 0
+                    set sound volume to v
+                end tell
+                """
+            var error: NSDictionary?
+            NSAppleScript(source: source)?.executeAndReturnError(&error)
+            if let code = error?[NSAppleScript.errorNumber] as? Int, code == Int(errAEEventNotPermitted) {
+                DispatchQueue.main.async { onPermissionDenied?() }
+            }
         }
     }
 }
@@ -636,7 +658,8 @@ enum SelfTest {
 
         var loaded = Config.load(from: url, loginEnabled: true)
         check(loaded.needsSave && loaded.warnings.isEmpty, "missing file needs save")
-        check(loaded.settings == Settings(hotkeys: [.playPause: "Ctrl+Shift+C", .next: "Ctrl+Shift+B", .previous: "Ctrl+Shift+Z"], startAtLogin: true), "defaults")
+        check(loaded.settings == Settings(hotkeys: [.playPause: "Ctrl+Shift+C", .next: "Ctrl+Shift+B", .previous: "Ctrl+Shift+Z",
+                                                    .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: "Ctrl+Shift+PageDown"], startAtLogin: true), "defaults")
 
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? "; comment\n  playpause = cmd+opt+p \nNext=\nPrevious=Hyper+Q\n# other\nstartatlogin=FALSE\n".write(to: url, atomically: true, encoding: .utf8)
@@ -646,7 +669,7 @@ enum SelfTest {
         check(loaded.settings.hotkeys[.previous] == "" && loaded.warnings.count == 1, "invalid hotkey warns")
         check(loaded.settings.startAtLogin == false && !loaded.needsSave, "StartAtLogin read")
 
-        let settings = Settings(hotkeys: [.playPause: "F8", .next: "Ctrl+Option+Right", .previous: ""], startAtLogin: true)
+        let settings = Settings(hotkeys: [.playPause: "F8", .next: "Ctrl+Option+Right", .previous: "", .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: ""], startAtLogin: true)
         do { try Config.save(settings, to: url) } catch { check(false, "save: \(error)") }
         loaded = Config.load(from: url, loginEnabled: false)
         check(loaded.settings == settings && !loaded.needsSave && loaded.warnings.isEmpty, "save/load round-trip")
