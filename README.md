@@ -10,7 +10,7 @@ Spotify Global Hotkeys (formerly Spoco) is a tiny tray / menu bar app with no de
 
 ## Download
 
-Get the latest version from the [Releases page](https://github.com/liekki/spoco/releases/latest):
+Get the latest version from the [Releases page](https://github.com/liekki/spotify-global-hotkeys/releases/latest):
 
 - **SpotifyGlobalHotkeysSetup.exe** — installer. Installs for your user only (no admin prompt), adds a Start menu entry, and can start Spotify Global Hotkeys when you log in.
 - **SpotifyGlobalHotkeys.exe** — portable. Put it in any folder and run it. Its settings are saved next to it in `SpotifyGlobalHotkeys.ini`.
@@ -82,7 +82,7 @@ Spotify Global Hotkeys registers system-wide hotkeys with `RegisterHotKey` and s
 
 Requires macOS 13 (Ventura) or later, on Apple silicon or Intel.
 
-1. Download **SpotifyGlobalHotkeys-macOS.zip** from the [Releases page](https://github.com/liekki/spoco/releases/latest), unzip it and move **Spotify Global Hotkeys.app** to Applications.
+1. Download **SpotifyGlobalHotkeys-macOS.zip** from the [Releases page](https://github.com/liekki/spotify-global-hotkeys/releases/latest), unzip it and move **Spotify Global Hotkeys.app** to Applications.
 2. The app isn't notarized by Apple, so the first time, **right-click Spotify Global Hotkeys.app → Open** and confirm. (On newer macOS versions, if there's no Open button: try to open it once, then go to System Settings → Privacy & Security and click **Open Anyway**.) Or [build it yourself](#building-on-macos).
 3. Spotify Global Hotkeys appears in the menu bar (no Dock icon). The first time you press a hotkey while Spotify is running, macOS asks whether Spotify Global Hotkeys may control Spotify — choose **Allow**. If you said no, turn it back on in System Settings → Privacy & Security → Automation → Spotify Global Hotkeys.
 
