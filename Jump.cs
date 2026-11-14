@@ -656,7 +656,7 @@ static class SpotifyPage
     // isn't on window, so find it in React's component tree. Rows on screen before navigating are
     // marked, so a click can't land on the previous page while the new one renders.
     const string Helper = @"
-if (!window.__sgh || window.__sgh.v !== 2) window.__sgh = (() => {
+if (!window.__sgh || window.__sgh.v !== 3) window.__sgh = (() => {
   let nav = null;
   const router = () => {
     if (nav) return nav;
@@ -690,7 +690,7 @@ if (!window.__sgh || window.__sgh.v !== 2) window.__sgh = (() => {
     await sleep(200); grab();
   };
   return {
-    v: 2,
+    v: 3,
     path() {
       const h = router();
       return h ? h.location.pathname + (h.location.search || '') : '/';
@@ -730,6 +730,7 @@ if (!window.__sgh || window.__sgh.v !== 2) window.__sgh = (() => {
     go(path) {
       const h = router();
       if (!h) return 'no-router';
+      if (h.location.pathname === path) return 'ok'; // already there: the rows on screen are the right ones
       rows().forEach(b => b.dataset.sghOld = '1');
       h.push(path);
       return 'ok';
@@ -1088,6 +1089,13 @@ static class Player
             IntPtr hwnd = RequireSpotify();
             string before = Spotify.Title(hwnd);
             if (before == song.Artist + " - " + song.Title) { Spotify.Send(Spotify.Play); return; }
+            // Paused on this very song (the window title then just says "Spotify Premium"): resume it.
+            if (!IsPlaying(before) && IsLoaded(song))
+            {
+                Spotify.Send(Spotify.Play);
+                Started(hwnd, before, song.Title);
+                return;
+            }
 
             var wanted = new[]
             {
@@ -1165,6 +1173,13 @@ static class Player
             if (i > 0 && i < cut) cut = i;
         }
         return title.Substring(0, cut);
+    }
+
+    static bool IsLoaded(Song song)
+    {
+        NowPlaying now = SpotifyPage.ReadNowPlaying("");
+        return now != null && string.Equals(now.Title, song.Title, StringComparison.OrdinalIgnoreCase)
+            && (song.Link == "" || now.Link == song.Link);
     }
 
     static bool IsPlaying(string windowTitle)
@@ -1276,6 +1291,11 @@ static class SelfTest
 
         uint mods; Keys key;
         Check(Config.Parse("Ctrl+Shift+J", out mods, out key) && key == Keys.J && mods == 6, "Jump hotkey parses");
+        Check(Config.Parse("Ctrl+Shift+PageDown", out mods, out key) && key == Keys.PageDown && mods == 6
+            && Config.Format(Keys.Control | Keys.Shift, Keys.PageUp, false) == "Ctrl+Shift+PageUp"
+            && Config.Format(Keys.Control | Keys.Shift, Keys.Next, false) == "Ctrl+Shift+PageDown", "volume hotkeys read and write as PageUp/PageDown");
+        Check(Config.Repeats(Config.VolumeUpCommand) && !Config.Repeats(Config.JumpCommand) && Config.Label("VolumeDown") == "Volume down",
+            "only volume hotkeys repeat while held");
 
         Console.WriteLine(failures == 0 ? "All self-tests passed." : failures + " self-test(s) FAILED.");
         return failures == 0 ? 0 : 1;
