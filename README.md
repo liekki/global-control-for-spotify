@@ -1,4 +1,8 @@
-# Spoco
+<p align="center">
+  <img src="docs/logo.png" alt="Spoco logo" width="128">
+</p>
+
+<h1 align="center">Spoco</h1>
 
 Global hotkeys for Spotify on Windows. Play/pause, skip and go back from anywhere — in a fullscreen game, a browser, a meeting — without switching to Spotify.
 
