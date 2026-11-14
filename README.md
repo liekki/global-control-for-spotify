@@ -67,6 +67,8 @@ Requires macOS 13 (Ventura) or later, on Apple silicon or Intel.
 
 The default hotkeys are the same as on Windows: `⌃⇧C` (Ctrl+Shift+C) play/pause, `⌃⇧B` next, `⌃⇧Z` previous. Mac apps use Cmd for their shortcuts, so these rarely get in the way.
 
+**Don't see the icon?** On MacBooks with a notch, macOS hides menu bar icons that don't fit to the left of the notch, and new apps are the first to go. Open Spoco.app again (from Spotlight or Finder) to bring up its Settings. To make room, hide some icons you don't need (System Settings → Control Centre, or the other apps' own settings), or use a menu bar manager such as [Ice](https://github.com/jordanbaird/Ice). Once Spoco is visible, ⌘-drag it further right so it stays visible.
+
 Click the menu bar icon → **Settings…** to change them. Click a box and press the combination; it needs Ctrl, Option or Cmd unless it's an F-key. **Start at Login** is in the same menu and adds Spoco to System Settings → General → Login Items.
 
 Settings live in `~/Library/Application Support/Spoco/Spoco.ini` (restart Spoco after editing by hand):

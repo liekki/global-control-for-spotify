@@ -291,6 +291,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reportConflicts(apply())
     }
 
+    // Opening Spoco.app again while it runs (Finder, Spotlight, Launchpad) opens Settings,
+    // so everything stays reachable when the menu bar icon is hidden behind the notch.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return false
+    }
+
     // Registers the current hotkeys and rebuilds the menu. Returns the ones that couldn't be registered.
     func apply() -> [String] {
         LoginItem.set(settings.startAtLogin)
