@@ -1,4 +1,4 @@
-﻿// Spoco - global hotkeys for Spotify (play/pause, next, previous) and Jump.
+// Spoco - global hotkeys for Spotify (play/pause, next, previous) and Jump.
 // The hotkeys send WM_APPCOMMAND straight to Spotify's window, so they work even when
 // another app (browser, game) owns the system media session. Jump keeps a local history
 // of songs played and starts one by driving Spotify's own UI through UI Automation.
@@ -82,8 +82,8 @@ class SpocoContext : ApplicationContext
             tray.ShowBalloonTip(5000, "Spoco", "Already in use by another app:\n" + string.Join("\n", failed.ToArray()), ToolTipIcon.Warning);
 
         // Jump needs Spotify started with its debugging port, so Spoco can start it (e.g. at login).
-        if (hotkeys[Config.StartSpotify] == "true" && Spotify.MainWindow() == IntPtr.Zero)
-            RunInBackground(SpotifyLauncher.Start);
+        if (hotkeys[Config.StartSpotify] == "true")
+            RunInBackground(SpotifyLauncher.EnsureAtStartup);
     }
 
     void OnHotkey(int command)
@@ -278,7 +278,7 @@ class SettingsForm : Form
 
         startSpotify = new CheckBox
         {
-            Text = "Start Spotify with Jump support when Spoco starts\n(turn off Spotify's own â€œOpen Spotify automaticallyâ€)",
+            Text = "Start Spotify with Jump support when Spoco starts" + Environment.NewLine + "(restarts a Spotify that just opened without it)",
             AutoSize = true,
             Checked = current[Config.StartSpotify] == "true",
             Margin = new Padding(3, 3, 3, 3)

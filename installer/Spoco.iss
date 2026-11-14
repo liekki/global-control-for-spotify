@@ -28,6 +28,7 @@ WizardStyle=modern
 
 [Tasks]
 Name: "startup"; Description: "Start Spoco when I log in to Windows"
+Name: "jump"; Description: "Start Spotify with Jump support (opens a debugging port on 127.0.0.1 that programs on this PC can use to control Spotify)"; Flags: unchecked
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Files]
@@ -55,23 +56,29 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im Spoco.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-// Spoco syncs autostart from Spoco.ini on launch. Dropping the setting there makes it
-// adopt whatever the installer just chose, instead of undoing it.
-procedure ForgetStartupSetting(Path: String);
+// Spoco syncs autostart from Spoco.ini on launch. Dropping StartWithWindows there makes it
+// adopt whatever the installer just chose, instead of undoing it. StartSpotify is set to the
+// installer's choice (Spoco fills in everything else on its next start).
+procedure WriteSettings(Path: String; StartSpotify: Boolean);
 var
   Lines, Kept: TArrayOfString;
   I, N: Integer;
+  Line: String;
 begin
-  if not LoadStringsFromFile(Path, Lines) then Exit;
+  if not LoadStringsFromFile(Path, Lines) then SetArrayLength(Lines, 0);
   N := 0;
-  SetArrayLength(Kept, GetArrayLength(Lines));
+  SetArrayLength(Kept, GetArrayLength(Lines) + 1);
   for I := 0 to GetArrayLength(Lines) - 1 do
-    if Pos('startwithwindows', Lowercase(Trim(Lines[I]))) <> 1 then
+  begin
+    Line := Lowercase(Trim(Lines[I]));
+    if (Pos('startwithwindows', Line) <> 1) and (Pos('startspotify', Line) <> 1) then
     begin
       Kept[N] := Lines[I];
       N := N + 1;
     end;
-  SetArrayLength(Kept, N);
+  end;
+  if StartSpotify then Kept[N] := 'StartSpotify=true' else Kept[N] := 'StartSpotify=false';
+  SetArrayLength(Kept, N + 1);
   SaveStringsToFile(Path, Kept, False);
 end;
 
@@ -89,7 +96,7 @@ begin
       RegWriteStringValue(HKCU, RunKey, 'Spoco', '"' + ExpandConstant('{app}\Spoco.exe') + '"')
     else
       RegDeleteValue(HKCU, RunKey, 'Spoco');
-    ForgetStartupSetting(ExpandConstant('{app}\Spoco.ini'));
+    WriteSettings(ExpandConstant('{app}\Spoco.ini'), WizardIsTaskSelected('jump'));
   end;
 end;
 

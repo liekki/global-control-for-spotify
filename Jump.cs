@@ -894,6 +894,44 @@ if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
 // Starts Spotify with the debugging port Jump needs, or restarts it if it's running without.
 static class SpotifyLauncher
 {
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+    // StartSpotify=true: when Spoco starts (usually at login), make sure Spotify has Jump support.
+    // Spotify's own autostart often wins the race and starts it without the port; a Spotify that
+    // started in the last few minutes and isn't playing yet is restarted, anything else is left alone
+    // (Jump offers a restart when you use it).
+    public static void EnsureAtStartup()
+    {
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            if (SpotifyPage.Available()) return;
+            IntPtr hwnd = Spotify.MainWindow();
+            if (hwnd != IntPtr.Zero)
+            {
+                string artist, title;
+                if (Strings.SplitTitle(Spotify.Title(hwnd), out artist, out title) || !StartedRecently(hwnd)) return;
+            }
+            try { Start(); return; }
+            catch (JumpException)
+            {
+                // Spotify's own autostart may have launched a copy without the port at the same moment; try once more.
+                if (attempt == 1) throw;
+            }
+        }
+    }
+
+    static bool StartedRecently(IntPtr hwnd)
+    {
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        try
+        {
+            using (var p = Process.GetProcessById((int)pid))
+                return DateTime.Now - p.StartTime < TimeSpan.FromMinutes(3);
+        }
+        catch (Exception) { return false; }
+    }
+
     public static string ExePath()
     {
         foreach (var p in Process.GetProcessesByName("Spotify"))
