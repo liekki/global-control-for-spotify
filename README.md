@@ -21,9 +21,11 @@ Windows SmartScreen may warn about an unrecognized app the first time, since the
 
 | Action     | Hotkey          |
 |------------|-----------------|
-| Play/Pause | `Ctrl+Alt+Up`   |
-| Next       | `Ctrl+Alt+Right`|
-| Previous   | `Ctrl+Alt+Left` |
+| Play/Pause | `Ctrl+Shift+C` |
+| Next       | `Ctrl+Shift+B` |
+| Previous   | `Ctrl+Shift+Z` |
+
+These are Winamp's classic global hotkeys. Note that they take over the same keys in other apps while Spoco is running — for example Redo (`Ctrl+Shift+Z`) in many editors, and the element inspector (`Ctrl+Shift+C`) and bookmarks bar (`Ctrl+Shift+B`) in Chrome and Edge. Change them in Settings if that gets in your way.
 
 ## Changing hotkeys
 
@@ -36,9 +38,9 @@ Double-click the tray icon (or right-click → **Settings...**), click the box f
 Settings live in `Spoco.ini` next to `Spoco.exe`, which you can also edit by hand (restart Spoco afterwards):
 
 ```ini
-PlayPause=Ctrl+Alt+Up
-Next=Ctrl+Alt+Right
-Previous=Ctrl+Alt+Left
+PlayPause=Ctrl+Shift+C
+Next=Ctrl+Shift+B
+Previous=Ctrl+Shift+Z
 
 ; true or false: launch Spoco when you log in to Windows.
 StartWithWindows=true

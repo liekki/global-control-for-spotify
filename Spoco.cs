@@ -387,7 +387,7 @@ static class Config
     const uint MOD_ALT = 1, MOD_CONTROL = 2, MOD_SHIFT = 4, MOD_WIN = 8;
 
     public static readonly string[] Names = { "PlayPause", "Next", "Previous" };
-    public static readonly string[] Defaults = { "Ctrl+Alt+Up", "Ctrl+Alt+Right", "Ctrl+Alt+Left" };
+    public static readonly string[] Defaults = { "Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z" }; // Winamp's classic hotkeys
     public static readonly int[] Commands = { Spotify.PlayPause, Spotify.NextTrack, Spotify.PreviousTrack };
     public const string StartWithWindows = "StartWithWindows";
 
