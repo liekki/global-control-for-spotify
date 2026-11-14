@@ -21,6 +21,12 @@ jobs:
         shell: cmd
         run: build.cmd
 
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $p = Start-Process .\Spoco.exe -ArgumentList '--selftest' -NoNewWindow -Wait -PassThru
+          exit $p.ExitCode
+
       - name: Build installer
         shell: pwsh
         run: |

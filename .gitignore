@@ -3,8 +3,9 @@
 Spoco.ico
 dist/
 
-# Per-user settings written next to the exe
+# Per-user settings and Jump history written next to the exe
 Spoco.ini
+SpocoHistory.tsv*
 
 # macOS build outputs (build.sh regenerates these)
 Spoco.app/

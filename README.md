@@ -25,6 +25,7 @@ Windows SmartScreen may warn about an unrecognized app the first time, since the
 | Play/Pause | `Ctrl+Shift+C` |
 | Next       | `Ctrl+Shift+B` |
 | Previous   | `Ctrl+Shift+Z` |
+| Jump       | `Ctrl+Shift+J` |
 
 These are Winamp's classic global hotkeys. Note that they take over the same keys in other apps while Spoco is running — for example Redo (`Ctrl+Shift+Z`) in many editors, and the element inspector (`Ctrl+Shift+C`) and bookmarks bar (`Ctrl+Shift+B`) in Chrome and Edge. Change them in Settings if that gets in your way.
 
@@ -42,9 +43,13 @@ Settings live in `Spoco.ini` next to `Spoco.exe`, which you can also edit by han
 PlayPause=Ctrl+Shift+C
 Next=Ctrl+Shift+B
 Previous=Ctrl+Shift+Z
+Jump=Ctrl+Shift+J
 
 ; true or false: launch Spoco when you log in to Windows.
 StartWithWindows=true
+
+; true or false: Spoco starts Spotify with the debugging port Jump needs (127.0.0.1 only).
+StartSpotify=false
 ```
 
 Key names are the .NET [`Keys`](https://learn.microsoft.com/dotnet/api/system.windows.forms.keys) names, such as `F9`, `Space`, `OemPeriod` or `MediaPlayPause`. Leave a value empty to disable that action.
@@ -52,6 +57,22 @@ Key names are the .NET [`Keys`](https://learn.microsoft.com/dotnet/api/system.wi
 ## Start with Windows
 
 Toggle it from the tray menu, the Settings window, or `StartWithWindows` in `Spoco.ini`. Spoco adds itself to your user's startup list (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), so no admin rights are needed.
+
+## Jump (Windows)
+
+Winamp's **J** for Spotify, from anywhere: press `Ctrl+Shift+J`, type a few letters of a song you've played, press **Enter**, and Spotify plays it — continuing with the rest of its album. Your game or app keeps focus.
+
+- Spoco remembers every song that plays for at least 20 seconds, with how often and how recently you played it (`SpocoHistory.tsv` next to `Spoco.exe`; nothing leaves your PC). **Clear history...** in Settings forgets it.
+- Type words in any order (`doors storm`); matched letters are highlighted. **↑/↓** pick, **Enter** plays, **Esc** closes, **Ctrl+R** switches between *Recent* and *Most played*.
+- The last row, **Search Spotify for "…"**, plays Spotify's top song for what you typed, even if you've never played it.
+- **Import playlists into Jump** (tray menu) adds every song in your playlists and Liked Songs, so Jump finds them before you've played them. They're listed below the songs you've actually played, with the playlist they came from ("in Liked Songs"); once you play one it becomes a normal entry. The import runs in the background — about a minute and a half for 80 playlists and 3,500 songs — and running it again only adds what's new. If Spotify is minimized or in the tray, Spoco briefly moves its window off-screen (it has to be rendered for the lists to load) and then puts it back exactly as it was. The history has no size limit.
+
+**Jump needs Spotify started by Spoco.** It plays songs by running a little JavaScript inside Spotify's own app through Chromium's debugging port, which is the only way to do it without the Spotify Web API and without Spotify jumping in front of your game. The first time you open Jump it offers to restart Spotify that way (press Enter; the music pauses for a few seconds and carries on). To have Spoco start Spotify for you every time, tick **Start Spotify with Jump support** in Settings and turn off Spotify's own *Settings → Startup and window behaviour → Open Spotify automatically after you log into the computer*.
+
+Good to know:
+
+- The debugging port (`127.0.0.1:9229`) only accepts connections from programs on your own PC, not from websites. While it's open, any program running on your PC could control Spotify and read its session, so only use Jump on a computer you trust.
+- Jump relies on how Spotify's app is built (button labels such as "Play Lions by Dire Straits"); a Spotify update can break it until Spoco is updated. It needs Spotify from spotify.com, not the Microsoft Store version, and Spotify's interface in English.
 
 ## How it works (Windows)
 

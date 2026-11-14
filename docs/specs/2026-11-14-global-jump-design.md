@@ -8,6 +8,21 @@ Constraint: **no Spotify Web API.** No developer app, no OAuth, no network calls
 
 Success: with Spotify running, Ctrl+Shift+J → type `sult` → Enter starts "Sultans Of Swing" within about two seconds, continuing with the rest of its album, and focus returns to the app you were in.
 
+## Revision: Windows playback through Spotify's debugging port
+
+Built and tested the same day, the UI Automation approach below works but **brings Spotify to the front on every jump**: opening a `spotify:` link starts a short-lived Spotify.exe that activates the window, and even a UI Automation click inside Spotify activates it. Measured with a 10 ms focus sampler, every variant (plain link, minimized/no-activate launch flags, in-app link click, search box + posted keys) took the foreground. `LockSetForegroundWindow` and waiting for Enter to be released didn't prevent it; taking focus back afterwards only reduced it to a flash.
+
+What does work, with Spotify never taking focus (also while minimized):
+
+- Spoco starts Spotify with `--remote-debugging-port=9229` and talks Chrome DevTools Protocol to its `xpui.app.spotify.com` page over `127.0.0.1` (`ClientWebSocket` + `JavaScriptSerializer`, both in .NET Framework).
+- Navigation: React Router's `history` object (found by walking React's fiber tree from any DOM node) `.push('/album/<id>')` or `.push('/search/<text>/tracks')`. Changing `location` directly does nothing.
+- Playing: `.click()` on the row button `[data-testid="tracklist-row"] button[aria-label="Play <title> by <artist>"]`. Rows on screen before navigating are marked so a click can't hit the old page. The click starts playback directly.
+- Recording: `[data-testid="now-playing-widget"] a[href*="/album/"]` gives the exact title and album id, which also tells where the artist ends in the window title.
+- Spotify needs the flag: Jump's popup offers to (re)start Spotify (killed and relaunched `--minimized`, then Play resumes the song), and `StartSpotify=true` makes Spoco start it at login. The port only accepts local connections (Chromium rejects web-page origins), but any local program could control Spotify while it's open; the README says so.
+- UI Automation, `spotify:` links and the focus guard are gone from the Windows code.
+
+The rest of this document (popup, history, ranking, macOS) stands; the "Windows details" section is kept for the record.
+
 ## Decisions
 
 | Decision | Choice | Why |
@@ -49,7 +64,7 @@ One line per distinct song, tab-separated, UTF-8, newest first, so the file is r
 - `link` is `spotify:album:<id>` on Windows and `spotify:track:<id>` on macOS (empty if unknown). The history isn't shared between platforms, so the difference doesn't matter.
 - Identity of a song: case-insensitive `title + artist + album`. Playing it again bumps `playCount` and `lastPlayed` and moves it to the top.
 - A play counts when the same song has been the current song for **20 seconds** while playing, so skipping through a playlist doesn't fill the history.
-- Capped at **5000** songs; the oldest by `lastPlayed` drop off.
+- No limit: the history keeps every song ever played (one line each, about 65 bytes), so it grows by a few thousand songs a year at most.
 - Location:
   - Windows: `SpocoHistory.tsv` next to `Spoco.exe` (same rule as `Spoco.ini`; the installer's uninstaller deletes it).
   - macOS: `~/Library/Application Support/Spoco/history.tsv`.
@@ -68,7 +83,7 @@ One line per distinct song, tab-separated, UTF-8, newest first, so the file is r
   - *Recent*: `lastPlayed` descending
   - *Most played*: frecency = `playCount × decay(lastPlayed)`, with `decay` halving every 30 days, so an old favourite still ranks but this week's songs win.
 - Matched letters are highlighted in the row.
-- Must stay instant: scoring 5000 rows per keystroke takes a few milliseconds on both platforms, so no index is needed.
+- Must stay instant: measured on Windows with 100,000 songs (6.5 MB), loading takes 0.2 s and every keystroke 12–29 ms, with no index. The tie-breaker is computed once per song per search, and only the best 500 results are kept (more than anyone scrolls). Saving 100,000 songs takes about 90 ms, so it runs off the UI thread.
 
 ## Windows details
 
@@ -124,7 +139,7 @@ Missing key → default (existing installs get Jump automatically). Empty → Ju
 - Add `--selftest` to the Windows build (macOS already has it) and run it in CI for both:
   - window-title parsing (`Artist - Title - 2021 Remaster` splits at the first ` - `; paused titles detected)
   - fuzzy scoring: word-prefix beats substring beats subsequence; `doors storm` finds "Riders On The Storm"; non-matches excluded
-  - frecency ordering and the 5000 cap
+  - frecency ordering and the history growing past 5000 songs
   - history file round-trip, including tabs/newlines in names being stripped, and a corrupt line being skipped
 - Manual, Windows, against a running Spotify:
   - capture: songs appear after 20 s; skipped songs don't; paused time doesn't count
@@ -141,3 +156,14 @@ Missing key → default (existing installs get Jump automatically). Empty → Ju
 - Add to queue (needs the "More options" context menu on Windows; not available via AppleScript).
 - Playlists, liked songs or albums as search scopes beyond what you've played.
 - Syncing history between machines.
+
+## Addendum: importing playlists (Windows)
+
+Built after the revision above, through the same debugging-port connection:
+
+- **Import playlists into Jump** (tray menu) reads Your Library's list (`[role="grid"][aria-label="Your Library"]`, rows `[aria-labelledby^="listrow-title-spotify:…"]`), keeps `spotify:playlist:*` and Liked Songs (`…:collection` → `/collection/tracks`), and opens each through Spotify's router.
+- Lists are virtualised, so the page scrolls its own scroll container in steps of 80% of a screen every 80 ms and collects rows by `aria-rowindex`: title and artist from the "Play <title> by <artist>" button, album from the row's `/album/` link. Rows without an album link (podcast episodes, local files) are skipped.
+- Chromium doesn't render a minimized or tray-hidden window, and then scrolling loads nothing (measured: 34 of 317 rows). The import therefore shows Spotify without activation, off-screen at the bottom of the z-order, and restores its exact placement afterwards.
+- Imported songs get `count = 0`, `lastPlayed = 0` and a seventh column, the first playlist they were seen in. They sort below everything played and show "in <playlist>" in the popup. Re-importing only adds new songs and fills in missing album links. Playing one turns it into a normal entry.
+- Jumps and imports take turns per playlist (`Player.Exclusive`), so a jump during an import waits a few seconds at most.
+- Measured on the author's library: 82 playlists, 3,629 songs (3,334 new) in 88 seconds, Spotify never in front.

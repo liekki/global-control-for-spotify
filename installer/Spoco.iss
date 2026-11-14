@@ -42,6 +42,7 @@ Filename: "{app}\Spoco.exe"; Description: "Start Spoco now"; Flags: nowait posti
 
 [UninstallDelete]
 Type: files; Name: "{app}\Spoco.ini"
+Type: files; Name: "{app}\SpocoHistory.tsv"
 
 [Code]
 const
