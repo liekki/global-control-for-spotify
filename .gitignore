@@ -5,3 +5,7 @@ dist/
 
 # Per-user settings written next to the exe
 Spoco.ini
+
+# macOS build outputs (build.sh regenerates these)
+Spoco.app/
+build/

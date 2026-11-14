@@ -1,4 +1,4 @@
-# Builds Spoco.exe and the installer. Pushing a tag like v1.2.3 publishes both as a GitHub release.
+# Builds Spoco.exe, the Windows installer and the macOS app. Pushing a tag like v1.2.3 publishes them as a GitHub release.
 name: Build
 
 on:
@@ -37,9 +37,34 @@ jobs:
             Spoco.exe
             dist/SpocoSetup.exe
 
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Spoco.app
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then export SPOCO_VERSION="${GITHUB_REF_NAME#v}"; fi
+          ./build.sh
+
+      - name: Self-test
+        run: Spoco.app/Contents/MacOS/Spoco --selftest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spoco-macos
+          path: dist/Spoco-macOS.zip
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [build, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
       - name: Publish release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: gh release create $env:GITHUB_REF_NAME dist/SpocoSetup.exe Spoco.exe --title "Spoco $env:GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/SpocoSetup.exe Spoco.exe Spoco-macOS.zip --repo "$GITHUB_REPOSITORY" --title "Spoco $GITHUB_REF_NAME" --generate-notes
