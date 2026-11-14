@@ -1,0 +1,45 @@
+# Builds Spoco.exe and the installer. Pushing a tag like v1.2.3 publishes both as a GitHub release.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Spoco.exe
+        shell: cmd
+        run: build.cmd
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '0.0.0' }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /Qp "/DAppVersion=$version" installer\Spoco.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spoco
+          path: |
+            Spoco.exe
+            dist/SpocoSetup.exe
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: gh release create $env:GITHUB_REF_NAME dist/SpocoSetup.exe Spoco.exe --title "Spoco $env:GITHUB_REF_NAME" --generate-notes

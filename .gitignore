@@ -1,0 +1,7 @@
+# Build outputs (build.cmd regenerates these)
+*.exe
+Spoco.ico
+dist/
+
+# Per-user settings written next to the exe
+Spoco.ini
