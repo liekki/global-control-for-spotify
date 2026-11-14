@@ -119,6 +119,8 @@ Side effect, by design: Spotify's window ends up showing that album or search pa
 
 ## macOS details
 
+Superseded by `2026-11-15-macos-jump-design.md` (hybrid AppleScript + debugging port).
+
 - Capture: a 2-second timer runs (off the main thread) `tell application "Spotify" to if player state is playing then get {id, name, artist, album} of current track`, only when Spotify is running. Same 20-second rule. Uses the Automation permission Spoco already asks for.
 - Play: `tell application "Spotify" to play track "<spotify:track:id>"`. AppleScript doesn't expose the album or playlist the song came from, so playback continues the way Spotify does for a single song (autoplay/radio) rather than with the album. Accepted.
 - "Search Spotify for …": `open location "spotify:search:<escaped text>"`. It can't start a result without the Accessibility permission, so on macOS this row just opens the search in Spotify (and brings it to the front). Labelled "Open Spotify search for '<text>'" there.
