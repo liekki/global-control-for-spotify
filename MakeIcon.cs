@@ -1,5 +1,5 @@
-// Draws Spoco.ico: a green Spotify-style logo with an air traffic control tower in front.
-// build.cmd runs this before compiling Spoco. Pass a folder as the first argument to also dump PNG previews.
+// Draws app.ico: a green Spotify-style logo with an air traffic control tower in front.
+// build.cmd runs this before compiling the app. Pass a folder as the first argument to also dump PNG previews.
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -22,7 +22,7 @@ static class MakeIcon
             images[i] = Draw(sizes[i]);
             if (args.Length > 0) images[i].Save(Path.Combine(args[0], "icon-" + sizes[i] + ".png"), ImageFormat.Png);
         }
-        WriteIco("Spoco.ico", images);
+        WriteIco("app.ico", images);
     }
 
     // Everything is laid out on a 256x256 grid and scaled. Small sizes get thicker strokes so they stay readable.

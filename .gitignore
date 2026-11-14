@@ -1,12 +1,15 @@
 # Build outputs (build.cmd regenerates these)
 *.exe
-Spoco.ico
+app.ico
 dist/
 
-# Per-user settings and Jump history written next to the exe
+# Per-user settings and Jump history written next to the exe (Spoco* from before the rename)
+SpotifyGlobalHotkeys.ini
+SpotifyGlobalHotkeys-history.tsv*
 Spoco.ini
 SpocoHistory.tsv*
+Spoco.ico
 
 # macOS build outputs (build.sh regenerates these)
-Spoco.app/
+*.app/
 build/

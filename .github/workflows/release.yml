@@ -1,4 +1,4 @@
-# Builds Spoco.exe, the Windows installer and the macOS app. Pushing a tag like v1.2.3 publishes them as a GitHub release.
+# Builds SpotifyGlobalHotkeys.exe, the Windows installer and the macOS app. Pushing a tag like v1.2.3 publishes them as a GitHub release.
 name: Build
 
 on:
@@ -17,14 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Spoco.exe
+      - name: Build SpotifyGlobalHotkeys.exe
         shell: cmd
         run: build.cmd
 
       - name: Self-test
         shell: pwsh
         run: |
-          $p = Start-Process .\Spoco.exe -ArgumentList '--selftest' -NoNewWindow -Wait -PassThru
+          $p = Start-Process .\SpotifyGlobalHotkeys.exe -ArgumentList '--selftest' -NoNewWindow -Wait -PassThru
           exit $p.ExitCode
 
       - name: Build installer
@@ -33,33 +33,33 @@ jobs:
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '0.0.0' }
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc /Qp "/DAppVersion=$version" installer\Spoco.iss
+          & $iscc /Qp "/DAppVersion=$version" installer\SpotifyGlobalHotkeys.iss
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: spoco
+          name: windows
           path: |
-            Spoco.exe
-            dist/SpocoSetup.exe
+            SpotifyGlobalHotkeys.exe
+            dist/SpotifyGlobalHotkeysSetup.exe
 
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Spoco.app
+      - name: Build the macOS app
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then export SPOCO_VERSION="${GITHUB_REF_NAME#v}"; fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then export APP_VERSION="${GITHUB_REF_NAME#v}"; fi
           ./build.sh
 
       - name: Self-test
-        run: Spoco.app/Contents/MacOS/Spoco --selftest
+        run: '"Spotify Global Hotkeys.app/Contents/MacOS/SpotifyGlobalHotkeys" --selftest'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: spoco-macos
-          path: dist/Spoco-macOS.zip
+          name: macos
+          path: dist/SpotifyGlobalHotkeys-macOS.zip
 
   release:
     if: github.ref_type == 'tag'
@@ -75,9 +75,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         # Re-pushing an existing tag replaces the release's files instead of failing.
         run: |
-          files="dist/SpocoSetup.exe Spoco.exe Spoco-macOS.zip"
+          files="dist/SpotifyGlobalHotkeysSetup.exe SpotifyGlobalHotkeys.exe SpotifyGlobalHotkeys-macOS.zip"
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --title "Spoco $GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --title "Spotify Global Hotkeys $GITHUB_REF_NAME" --generate-notes
           fi

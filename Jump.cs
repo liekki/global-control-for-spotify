@@ -1,4 +1,4 @@
-// Spoco Jump - press a hotkey, type part of a song you've played, Enter plays it.
+// Jump - press a hotkey, type part of a song you've played, Enter plays it.
 // Songs are recorded locally while Spotify plays; playback runs JavaScript inside Spotify
 // through its debugging port (no Spotify Web API, no window activation). See docs/specs/2026-11-14-global-jump-design.md.
 using System;
@@ -407,7 +407,7 @@ class JumpForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         DoubleBuffered = true;
-        Text = "Spoco Jump";
+        Text = "Jump";
 
         string face = SystemFonts.MessageBoxFont.Name;
         boxFont = new Font(face, 14f);
@@ -568,8 +568,8 @@ class JumpForm : Form
         if (RowCount == 0)
         {
             string message = !spotifyRunning ? "Spotify isn't running. Press Enter to start it with Jump support."
-                : !jumpReady ? "Jump needs Spotify started by Spoco. Press Enter to restart Spotify (a few seconds' pause)."
-                : "Play some songs. Spoco remembers each one after 20 seconds.";
+                : !jumpReady ? "Jump needs Spotify started with Jump support. Press Enter to restart Spotify (a few seconds' pause)."
+                : "Play some songs. Jump remembers each one after 20 seconds.";
             TextRenderer.DrawText(g, message, subFont, new Rectangle(pad * 2, headerHeight, Width - pad * 4, rowHeight), dim,
                 flags | TextFormatFlags.VerticalCenter);
             return;
@@ -641,7 +641,7 @@ class NowPlaying
 }
 
 // Spotify's desktop app is a web page in an embedded Chromium. Started with --remote-debugging-port,
-// it lets Spoco run JavaScript inside that page (Chrome DevTools Protocol, 127.0.0.1 only). Navigating
+// it lets this app run JavaScript inside that page (Chrome DevTools Protocol, 127.0.0.1 only). Navigating
 // and clicking from inside the page never activates Spotify's window, so Jump doesn't pull you out of
 // a game the way opening spotify: links or UI Automation clicks do.
 static class SpotifyPage
@@ -656,7 +656,7 @@ static class SpotifyPage
     // isn't on window, so find it in React's component tree. Rows on screen before navigating are
     // marked, so a click can't land on the previous page while the new one renders.
     const string Helper = @"
-if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
+if (!window.__sgh || window.__sgh.v !== 2) window.__sgh = (() => {
   let nav = null;
   const router = () => {
     if (nav) return nav;
@@ -712,7 +712,7 @@ if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
     async collect() {
       const fresh = () => [...document.querySelectorAll('[data-testid=""tracklist-row""]')].filter(r => {
         const b = r.querySelector('button[aria-label]');
-        return b && !b.dataset.spocoOld;
+        return b && !b.dataset.sghOld;
       });
       for (let i = 0; i < 60 && !fresh().length; i++) await sleep(100);
       if (!fresh().length) return '[]';
@@ -730,12 +730,12 @@ if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
     go(path) {
       const h = router();
       if (!h) return 'no-router';
-      rows().forEach(b => b.dataset.spocoOld = '1');
+      rows().forEach(b => b.dataset.sghOld = '1');
       h.push(path);
       return 'ok';
     },
     click(wanted) {
-      const fresh = rows().filter(b => !b.dataset.spocoOld);
+      const fresh = rows().filter(b => !b.dataset.sghOld);
       for (const [exact, text] of wanted) {
         const t = text.toLowerCase();
         const b = fresh.find(b => { const l = b.getAttribute('aria-label').toLowerCase(); return exact ? l === t : l.startsWith(t); });
@@ -771,14 +771,14 @@ if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
         return null;
     }
 
-    public static string Go(string path) { return Eval("__spoco.go(" + json.Serialize(path) + ")"); }
+    public static string Go(string path) { return Eval("__sgh.go(" + json.Serialize(path) + ")"); }
 
     // wanted: (exact, label) pairs in order of preference, e.g. (true, "Play Lions by Dire Straits").
-    public static string Click(params object[][] wanted) { return Eval("__spoco.click(" + json.Serialize(wanted) + ")"); }
+    public static string Click(params object[][] wanted) { return Eval("__sgh.click(" + json.Serialize(wanted) + ")"); }
 
     public static NowPlaying ReadNowPlaying(string artist)
     {
-        string[] parts = Eval("__spoco.nowPlaying()").Split('\n');
+        string[] parts = Eval("__sgh.nowPlaying()").Split('\n');
         string id = parts.Length == 2 ? AlbumId(parts[1]) : null;
         if (id == null) return null;
         return new NowPlaying { Title = parts[0], Artist = artist, Link = "spotify:album:" + id };
@@ -793,12 +793,12 @@ if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
         return end >= 0 ? id.Substring(0, end) : id;
     }
 
-    public static string CurrentPath() { return Eval("__spoco.path()"); }
+    public static string CurrentPath() { return Eval("__sgh.path()"); }
 
     // Your Library's playlists (and Liked Songs) as uri -> name, in library order.
     public static List<KeyValuePair<string, string>> Library()
     {
-        string result = Eval("__spoco.library()", 60000);
+        string result = Eval("__sgh.library()", 60000);
         if (result == "no-library") throw new JumpException("Open Your Library in Spotify's sidebar, then import again.");
         var lists = new List<KeyValuePair<string, string>>();
         foreach (object[] pair in (object[])json.DeserializeObject(result))
@@ -810,7 +810,7 @@ if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
     public static List<Song> Collect(string playlist)
     {
         var songs = new List<Song>();
-        foreach (object[] row in (object[])json.DeserializeObject(Eval("__spoco.collect()", 300000)))
+        foreach (object[] row in (object[])json.DeserializeObject(Eval("__sgh.collect()", 300000)))
         {
             string id = AlbumId((string)row[2]);
             songs.Add(new Song { Title = (string)row[0], Artist = (string)row[1], Link = id == null ? "" : "spotify:album:" + id, Playlist = playlist });
@@ -883,7 +883,7 @@ if (!window.__spoco || window.__spoco.v !== 2) window.__spoco = (() => {
                 var reply = (Dictionary<string, object>)json.DeserializeObject(Encoding.UTF8.GetString(bytes.ToArray()));
                 if (!reply.ContainsKey("id") || (int)reply["id"] != id) continue; // an event, not our answer
                 var outer = (Dictionary<string, object>)reply["result"];
-                if (outer.ContainsKey("exceptionDetails")) throw new JumpException("Spotify's page didn't understand Spoco (Spotify may have changed).");
+                if (outer.ContainsKey("exceptionDetails")) throw new JumpException("Spotify's page didn't understand this app (Spotify may have changed).");
                 var result = (Dictionary<string, object>)outer["result"];
                 return result.ContainsKey("value") ? Convert.ToString(result["value"]) : "";
             }
@@ -896,7 +896,7 @@ static class SpotifyLauncher
 {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 
-    // StartSpotify=true: when Spoco starts (usually at login), make sure Spotify has Jump support.
+    // StartSpotify=true: when this app starts (usually at login), make sure Spotify has Jump support.
     // Spotify's own autostart often wins the race and starts it without the port; a Spotify that
     // started in the last few minutes and isn't playing yet is restarted, anything else is left alone
     // (Jump offers a restart when you use it).
@@ -1128,7 +1128,7 @@ static class Player
 
     static bool GoAndClick(string path, params object[][] wanted)
     {
-        if (SpotifyPage.Go(path) != "ok") throw new JumpException("Spoco couldn't find its way around Spotify (Spotify may have changed).");
+        if (SpotifyPage.Go(path) != "ok") throw new JumpException("Couldn't find the way around Spotify (Spotify may have changed).");
         var sw = Stopwatch.StartNew();
         long noMatchSince = -1;
         while (sw.ElapsedMilliseconds < 5000)
@@ -1185,7 +1185,7 @@ static class Player
     }
 }
 
-// ---------------------------------------------------------------- self-test (Spoco.exe --selftest)
+// ---------------------------------------------------------------- self-test (SpotifyGlobalHotkeys.exe --selftest)
 
 static class SelfTest
 {
@@ -1227,7 +1227,7 @@ static class SelfTest
         Ranker.Score(songs[0], new[] { "swing" }, mask, null);
         Check(mask[11] && mask[15] && !mask[0], "match highlights the right letters");
 
-        string path = Path.Combine(Path.GetTempPath(), "spoco-selftest-" + Process.GetCurrentProcess().Id + ".tsv");
+        string path = Path.Combine(Path.GetTempPath(), "sgh-selftest-" + Process.GetCurrentProcess().Id + ".tsv");
         try
         {
             var h = new History(path);

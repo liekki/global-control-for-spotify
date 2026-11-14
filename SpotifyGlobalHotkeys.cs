@@ -1,4 +1,4 @@
-// Spoco - global hotkeys for Spotify (play/pause, next, previous) and Jump.
+// Spotify Global Hotkeys - global hotkeys for Spotify (play/pause, next, previous) and Jump.
 // The hotkeys send WM_APPCOMMAND straight to Spotify's window, so they work even when
 // another app (browser, game) owns the system media session. Jump keeps a local history
 // of songs played and starts one by driving Spotify's own UI through UI Automation.
@@ -13,6 +13,9 @@ using System.Windows.Forms;
 
 static class Program
 {
+    public const string Name = "Spotify Global Hotkeys", FileName = "SpotifyGlobalHotkeys";
+    public static readonly string Folder = AppDomain.CurrentDomain.BaseDirectory;
+
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
 
     [STAThread]
@@ -21,29 +24,46 @@ static class Program
         if (args.Length > 0 && args[0] == "--selftest") return SelfTest.Run();
 
         bool created;
-        using (var mutex = new System.Threading.Mutex(true, "Spoco.SingleInstance", out created))
+        using (var mutex = new System.Threading.Mutex(true, FileName + ".SingleInstance", out created))
         {
             if (!created) return 0;
             SetProcessDPIAware();
+            MigrateFromSpoco();
             Application.EnableVisualStyles();
-            Application.Run(new SpocoContext());
+            Application.Run(new TrayApp());
         }
         return 0;
     }
 
+    // This app used to be called Spoco: carry its settings and Jump history over to the new names.
+    static void MigrateFromSpoco()
+    {
+        var moves = new[,]
+        {
+            { "Spoco.ini", FileName + ".ini" },
+            { "SpocoHistory.tsv", FileName + "-history.tsv" },
+        };
+        for (int i = 0; i < moves.GetLength(0); i++)
+        {
+            string from = Path.Combine(Folder, moves[i, 0]), to = Path.Combine(Folder, moves[i, 1]);
+            try { if (File.Exists(from) && !File.Exists(to)) File.Move(from, to); }
+            catch (IOException) { } // keep going with defaults rather than not starting
+        }
+    }
+
     public static Icon AppIcon(Size size)
     {
-        using (var s = typeof(Program).Assembly.GetManifestResourceStream("Spoco.ico"))
+        using (var s = typeof(Program).Assembly.GetManifestResourceStream("app.ico"))
             return new Icon(s, size);
     }
 }
 
-class SpocoContext : ApplicationContext
+class TrayApp : ApplicationContext
 {
     readonly NotifyIcon tray;
     readonly HotkeyWindow window = new HotkeyWindow();
-    readonly string iniPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Spoco.ini");
-    readonly History history = new History(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SpocoHistory.tsv"));
+    readonly string iniPath = Path.Combine(Program.Folder, Program.FileName + ".ini");
+    readonly History history = new History(Path.Combine(Program.Folder, Program.FileName + "-history.tsv"));
     readonly Control ui = new Control(); // marshals background results back to this thread
     readonly Recorder recorder;
     readonly Timer saveTimer = new Timer { Interval = 30000 };
@@ -52,12 +72,12 @@ class SpocoContext : ApplicationContext
     JumpForm jump;
     bool importing;
 
-    public SpocoContext()
+    public TrayApp()
     {
         tray = new NotifyIcon
         {
             Icon = Program.AppIcon(SystemInformation.SmallIconSize),
-            Text = "Spoco - Spotify hotkeys",
+            Text = Program.Name,
             ContextMenuStrip = new ContextMenuStrip(),
             Visible = true
         };
@@ -79,9 +99,9 @@ class SpocoContext : ApplicationContext
         hotkeys = Config.Load(iniPath);
         var failed = Apply();
         if (failed.Count > 0)
-            tray.ShowBalloonTip(5000, "Spoco", "Already in use by another app:\n" + string.Join("\n", failed.ToArray()), ToolTipIcon.Warning);
+            tray.ShowBalloonTip(5000, Program.Name, "Already in use by another app:\n" + string.Join("\n", failed.ToArray()), ToolTipIcon.Warning);
 
-        // Jump needs Spotify started with its debugging port, so Spoco can start it (e.g. at login).
+        // Jump needs Spotify started with its debugging port, so this app can start it (e.g. at login).
         if (hotkeys[Config.StartSpotify] == "true")
             RunInBackground(SpotifyLauncher.EnsureAtStartup);
     }
@@ -107,18 +127,18 @@ class SpocoContext : ApplicationContext
         if (importing) return;
         importing = true;
         if (settings == null) Apply();
-        tray.ShowBalloonTip(3000, "Spoco", "Importing your playlists in the background. Spotify stays where it is.", ToolTipIcon.Info);
+        tray.ShowBalloonTip(3000, Program.Name, "Importing your playlists in the background. Spotify stays where it is.", ToolTipIcon.Info);
         Action<string> progress = text => ui.BeginInvoke((Action)delegate { tray.Text = text.Length > 63 ? text.Substring(0, 60) + "..." : text; });
         RunInBackground(delegate
         {
             try
             {
                 string summary = PlaylistImport.Run(history, progress);
-                ui.BeginInvoke((Action)delegate { tray.ShowBalloonTip(5000, "Spoco", summary, ToolTipIcon.Info); });
+                ui.BeginInvoke((Action)delegate { tray.ShowBalloonTip(5000, Program.Name, summary, ToolTipIcon.Info); });
             }
             finally
             {
-                ui.BeginInvoke((Action)delegate { importing = false; tray.Text = "Spoco - Spotify hotkeys"; if (settings == null) Apply(); });
+                ui.BeginInvoke((Action)delegate { importing = false; tray.Text = Program.Name; if (settings == null) Apply(); });
             }
         });
     }
@@ -128,7 +148,7 @@ class SpocoContext : ApplicationContext
         RunInBackground(delegate
         {
             SpotifyLauncher.Start();
-            ui.BeginInvoke((Action)delegate { tray.ShowBalloonTip(3000, "Spoco", "Spotify is ready for Jump.", ToolTipIcon.Info); });
+            ui.BeginInvoke((Action)delegate { tray.ShowBalloonTip(3000, Program.Name, "Spotify is ready for Jump.", ToolTipIcon.Info); });
         });
     }
 
@@ -141,7 +161,7 @@ class SpocoContext : ApplicationContext
             catch (Exception e)
             {
                 string message = e is JumpException ? e.Message : "Something went wrong: " + e.Message;
-                ui.BeginInvoke((Action)delegate { tray.ShowBalloonTip(5000, "Spoco", message, ToolTipIcon.Warning); });
+                ui.BeginInvoke((Action)delegate { tray.ShowBalloonTip(5000, Program.Name, message, ToolTipIcon.Warning); });
             }
         });
         thread.IsBackground = true;
@@ -206,7 +226,7 @@ class SpocoContext : ApplicationContext
             var failed = Apply();
             if (failed.Count > 0)
                 MessageBox.Show("These hotkeys are already in use by another app:\n\n" + string.Join("\n", failed.ToArray()),
-                    "Spoco", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         };
         settings.Show();
         settings.Activate();
@@ -233,7 +253,7 @@ class SettingsForm : Form
 
     public SettingsForm(Dictionary<string, string> current, History history)
     {
-        Text = "Spoco hotkeys";
+        Text = Program.Name;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -278,7 +298,7 @@ class SettingsForm : Form
 
         startSpotify = new CheckBox
         {
-            Text = "Start Spotify with Jump support when Spoco starts" + Environment.NewLine + "(restarts a Spotify that just opened without it)",
+            Text = "Start Spotify with Jump support when this app starts" + Environment.NewLine + "(restarts a Spotify that just opened without it)",
             AutoSize = true,
             Checked = current[Config.StartSpotify] == "true",
             Margin = new Padding(3, 3, 3, 3)
@@ -298,7 +318,7 @@ class SettingsForm : Form
         var clearHistory = new Button { Text = "Clear history...", AutoSize = true };
         clearHistory.Click += delegate
         {
-            if (MessageBox.Show("Forget all " + history.Count + " songs Jump remembers?", "Spoco",
+            if (MessageBox.Show("Forget all " + history.Count + " songs Jump remembers?", Program.Name,
                     MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK)
                 history.Clear();
         };
@@ -323,7 +343,7 @@ class SettingsForm : Form
             if (text == "") continue;
             if (seen.TryGetValue(text, out other))
             {
-                MessageBox.Show(Config.Label(other) + " and " + Config.Label(name) + " both use " + text + ".", "Spoco", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(Config.Label(other) + " and " + Config.Label(name) + " both use " + text + ".", Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             seen[text] = name;
@@ -408,14 +428,15 @@ static class Startup
         get
         {
             using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey))
-                return key != null && Command.Equals(key.GetValue("Spoco") as string, StringComparison.OrdinalIgnoreCase);
+                return key != null && Command.Equals(key.GetValue(Program.FileName) as string, StringComparison.OrdinalIgnoreCase);
         }
         set
         {
             using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey))
             {
-                if (value) key.SetValue("Spoco", Command);
-                else key.DeleteValue("Spoco", false);
+                key.DeleteValue("Spoco", false); // the old name
+                if (value) key.SetValue(Program.FileName, Command);
+                else key.DeleteValue(Program.FileName, false);
             }
         }
     }
@@ -524,7 +545,7 @@ static class Config
 {
     const uint MOD_ALT = 1, MOD_CONTROL = 2, MOD_SHIFT = 4, MOD_WIN = 8;
 
-    public const int JumpCommand = -1; // handled by Spoco itself, never sent to Spotify
+    public const int JumpCommand = -1; // handled by this app itself, never sent to Spotify
     public static readonly string[] Names = { "PlayPause", "Next", "Previous", "Jump" };
     public static readonly string[] Defaults = { "Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z", "Ctrl+Shift+J" }; // Winamp's classic hotkeys
     public static readonly int[] Commands = { Spotify.PlayPause, Spotify.NextTrack, Spotify.PreviousTrack, JumpCommand };
@@ -562,7 +583,7 @@ static class Config
             if (!values.TryGetValue(Names[i], out text)) text = Defaults[i];
             else if (text != "" && !Parse(text, out mods, out key))
             {
-                MessageBox.Show("Can't understand hotkey for " + Label(Names[i]) + ": " + text, "Spoco");
+                MessageBox.Show("Can't understand hotkey for " + Label(Names[i]) + ": " + text, Program.Name);
                 text = "";
             }
             result[Names[i]] = text;
@@ -586,14 +607,14 @@ static class Config
     public static void Save(string path, Dictionary<string, string> hotkeys)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("; Spoco hotkeys. Easiest to change from the tray icon: right-click > Settings.");
+        sb.AppendLine("; " + Program.Name + " hotkeys. Easiest to change from the tray icon: right-click > Settings.");
         sb.AppendLine("; Modifiers: Ctrl, Alt, Shift, Win. Leave empty to disable.");
         foreach (var name in Names) sb.AppendLine(name + "=" + hotkeys[name]);
         sb.AppendLine();
-        sb.AppendLine("; true or false: launch Spoco when you log in to Windows.");
+        sb.AppendLine("; true or false: launch " + Program.Name + " when you log in to Windows.");
         sb.AppendLine(StartWithWindows + "=" + hotkeys[StartWithWindows]);
         sb.AppendLine();
-        sb.AppendLine("; true or false: Spoco starts Spotify with the debugging port Jump needs (127.0.0.1 only).");
+        sb.AppendLine("; true or false: " + Program.Name + " starts Spotify with the debugging port Jump needs (127.0.0.1 only).");
         sb.AppendLine(StartSpotify + "=" + hotkeys[StartSpotify]);
         File.WriteAllText(path, sb.ToString());
     }

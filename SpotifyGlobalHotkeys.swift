@@ -1,4 +1,4 @@
-// Spoco for macOS - global hotkeys for Spotify (play/pause, next, previous).
+// Spotify Global Hotkeys for macOS - global hotkeys for Spotify (play/pause, next, previous).
 // Hotkeys come from Carbon's RegisterEventHotKey (no Accessibility permission needed)
 // and are sent to Spotify as Apple Events, so they reach Spotify even when a browser
 // or another app owns the system's Now Playing controls.
@@ -22,7 +22,7 @@ struct Hotkey: Equatable {
     var modifiers: UInt32 // Carbon modifier bits: controlKey, optionKey, shiftKey, cmdKey
 }
 
-// Name used in Spoco.ini, symbol shown in the UI, and the physical (ANSI) key code.
+// Name used in the .ini, symbol shown in the UI, and the physical (ANSI) key code.
 struct KeyName { let name: String; let symbol: String; let code: Int }
 
 let keyNames: [KeyName] = {
@@ -128,7 +128,7 @@ enum HotkeyText {
     }
 }
 
-// MARK: - Config (Spoco.ini)
+// MARK: - Config (SpotifyGlobalHotkeys.ini)
 
 struct Settings: Equatable {
     var hotkeys: [Action: String]
@@ -139,8 +139,15 @@ enum Config {
     static let startAtLoginKey = "StartAtLogin"
 
     static var defaultURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Spoco", isDirectory: true).appendingPathComponent("Spoco.ini")
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let url = support.appendingPathComponent("Spotify Global Hotkeys", isDirectory: true).appendingPathComponent("SpotifyGlobalHotkeys.ini")
+        // This app used to be called Spoco: carry its settings over once.
+        let old = support.appendingPathComponent("Spoco", isDirectory: true).appendingPathComponent("Spoco.ini")
+        if !FileManager.default.fileExists(atPath: url.path), FileManager.default.fileExists(atPath: old.path) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? FileManager.default.moveItem(at: old, to: url)
+        }
+        return url
     }
 
     // Returns the settings, whether the file should be (re)written, and messages about values that couldn't be read.
@@ -174,10 +181,10 @@ enum Config {
     }
 
     static func save(_ settings: Settings, to url: URL) throws {
-        var s = "; Spoco hotkeys. Easiest to change from the menu bar icon: Settings...\n"
+        var s = "; Spotify Global Hotkeys. Easiest to change from the menu bar icon: Settings...\n"
         s += "; Modifiers: Ctrl, Option, Shift, Cmd. Leave empty to disable.\n"
         for action in Action.allCases { s += "\(action.key)=\(settings.hotkeys[action] ?? "")\n" }
-        s += "\n; true or false: launch Spoco when you log in.\n"
+        s += "\n; true or false: launch Spotify Global Hotkeys when you log in.\n"
         s += "\(startAtLoginKey)=\(settings.startAtLogin)\n"
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try s.write(to: url, atomically: true, encoding: .utf8)
@@ -227,7 +234,7 @@ final class HotkeyCenter {
 
 enum Spotify {
     static let bundleID = "com.spotify.client"
-    static let queue = DispatchQueue(label: "Spoco.Spotify")
+    static let queue = DispatchQueue(label: "SpotifyGlobalHotkeys.Spotify")
     static var onPermissionDenied: (() -> Void)?
 
     static func fourCC(_ s: String) -> FourCharCode { s.utf8.reduce(0) { $0 << 8 | FourCharCode($1) } }
@@ -264,7 +271,7 @@ enum LoginItem {
         do {
             if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
-            NSLog("Spoco: couldn't change login item: \(error)")
+            NSLog("Spotify Global Hotkeys: couldn't change login item: \(error)")
         }
     }
 }
@@ -280,7 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = menuBarIcon()
-        statusItem.button?.toolTip = "Spoco - Spotify hotkeys"
+        statusItem.button?.toolTip = "Spotify Global Hotkeys"
         HotkeyCenter.shared.onPress = { Spotify.send($0) }
         Spotify.onPermissionDenied = { [weak self] in self?.permissionDenied() }
 
@@ -291,7 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reportConflicts(apply())
     }
 
-    // Opening Spoco.app again while it runs (Finder, Spotlight, Launchpad) opens Settings,
+    // Opening the app again while it runs (Finder, Spotlight, Launchpad) opens Settings,
     // so everything stays reachable when the menu bar icon is hidden behind the notch.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showSettings()
@@ -324,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         login.state = LoginItem.isEnabled ? .on : .off
         menu.addItem(login)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Spoco", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Spotify Global Hotkeys", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
         return failed
     }
@@ -384,8 +391,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         warnedAboutPermission = true
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Spoco isn't allowed to control Spotify"
-        a.informativeText = "Turn on Spotify under Spoco in System Settings → Privacy & Security → Automation, then try the hotkey again."
+        a.messageText = "Spotify Global Hotkeys isn't allowed to control Spotify"
+        a.informativeText = "Turn on Spotify under Spotify Global Hotkeys in System Settings → Privacy & Security → Automation, then try the hotkey again."
         a.addButton(withTitle: "Open System Settings")
         a.addButton(withTitle: "Cancel")
         if a.runModal() == .alertFirstButtonReturn,
@@ -397,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func alert(_ text: String) {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Spoco"
+        a.messageText = "Spotify Global Hotkeys"
         a.informativeText = text
         a.alertStyle = .warning
         a.runModal()
@@ -437,7 +444,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     init(settings: Settings) {
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Spoco Settings"
+        window.title = "Spotify Global Hotkeys"
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -599,7 +606,7 @@ final class HotkeyField: NSView {
     }
 }
 
-// MARK: - Self-test (run by CI: Spoco --selftest)
+// MARK: - Self-test (run by CI: SpotifyGlobalHotkeys --selftest)
 
 enum SelfTest {
     static func run() -> Bool {
@@ -623,9 +630,9 @@ enum SelfTest {
         check(HotkeyText.display("Ctrl+Shift+C") == "⌃⇧C", "display")
         check(HotkeyText.isFunctionKey(UInt32(kVK_F12)) && !HotkeyText.isFunctionKey(UInt32(kVK_ANSI_F)), "function keys")
 
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("spoco-selftest-\(getpid())")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sgh-selftest-\(getpid())")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let url = dir.appendingPathComponent("Spoco.ini")
+        let url = dir.appendingPathComponent("SpotifyGlobalHotkeys.ini")
 
         var loaded = Config.load(from: url, loginEnabled: true)
         check(loaded.needsSave && loaded.warnings.isEmpty, "missing file needs save")
