@@ -1,7 +1,7 @@
 ; Inno Setup script for Spotify Global Hotkeys. Build SpotifyGlobalHotkeys.exe first (build.cmd), then:
 ;   iscc /DAppVersion=1.2.3 installer\SpotifyGlobalHotkeys.iss
 ; Installs per user (no admin prompt) to %LOCALAPPDATA%\Programs\Spotify Global Hotkeys.
-; The app used to be called Spoco; the AppId is unchanged, so installing over Spoco upgrades it in place.
+; The AppId is unchanged from the app's old name, so installing over an old version upgrades it in place.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -33,7 +33,7 @@ Name: "jump"; Description: "Start Spotify with Jump support (opens a debugging p
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [InstallDelete]
-; Left over from when the app was called Spoco
+; Left over from the app's old name
 Type: files; Name: "{app}\Spoco.exe"
 Type: files; Name: "{autoprograms}\Spoco.lnk"
 Type: files; Name: "{autodesktop}\Spoco.lnk"
@@ -66,9 +66,9 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im SpotifyGlobalHotkeys.exe /im Spoco.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-// Carry Spoco's settings and history over, like the app itself does on first start, so the
+// Carry settings and history saved under the old name over, like the app itself does on first start, so the
 // installer's choices below land in the file the app will read.
-procedure MigrateFromSpoco;
+procedure MigrateFromOldName;
 begin
   if FileExists(ExpandConstant('{app}\Spoco.ini')) and not FileExists(ExpandConstant('{app}\SpotifyGlobalHotkeys.ini')) then
     RenameFile(ExpandConstant('{app}\Spoco.ini'), ExpandConstant('{app}\SpotifyGlobalHotkeys.ini'));
@@ -117,7 +117,7 @@ begin
       RegWriteStringValue(HKCU, RunKey, 'SpotifyGlobalHotkeys', '"' + ExpandConstant('{app}\SpotifyGlobalHotkeys.exe') + '"')
     else
       RegDeleteValue(HKCU, RunKey, 'SpotifyGlobalHotkeys');
-    MigrateFromSpoco;
+    MigrateFromOldName;
     WriteSettings(ExpandConstant('{app}\SpotifyGlobalHotkeys.ini'), WizardIsTaskSelected('jump'));
   end;
 end;

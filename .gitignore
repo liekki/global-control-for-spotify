@@ -3,12 +3,9 @@
 app.ico
 dist/
 
-# Per-user settings and Jump history written next to the exe (Spoco* from before the rename)
+# Per-user settings and Jump history written next to the exe
 SpotifyGlobalHotkeys.ini
 SpotifyGlobalHotkeys-history.tsv*
-Spoco.ini
-SpocoHistory.tsv*
-Spoco.ico
 
 # macOS build outputs (build.sh regenerates these)
 *.app/

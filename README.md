@@ -6,7 +6,7 @@
 
 Global hotkeys for Spotify on Windows and macOS. Play/pause, skip and go back from anywhere — in a fullscreen game, a browser, a meeting — without switching to Spotify.
 
-Spotify Global Hotkeys (formerly Spoco) is a tiny tray / menu bar app with no dependencies beyond what ships with the OS. This page covers Windows first; see [macOS](#macos) for the Mac version.
+Spotify Global Hotkeys is a tiny tray / menu bar app with no dependencies beyond what ships with the OS. This page covers Windows first; see [macOS](#macos) for the Mac version.
 
 ## Download
 

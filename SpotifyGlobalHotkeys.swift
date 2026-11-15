@@ -144,7 +144,7 @@ enum Config {
     static var defaultURL: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let url = support.appendingPathComponent("Spotify Global Hotkeys", isDirectory: true).appendingPathComponent("SpotifyGlobalHotkeys.ini")
-        // This app used to be called Spoco: carry its settings over once.
+        // Carry settings saved under the app's old name over once.
         let old = support.appendingPathComponent("Spoco", isDirectory: true).appendingPathComponent("Spoco.ini")
         if !FileManager.default.fileExists(atPath: url.path), FileManager.default.fileExists(atPath: old.path) {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

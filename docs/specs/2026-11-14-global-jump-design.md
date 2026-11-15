@@ -14,11 +14,11 @@ Built and tested the same day, the UI Automation approach below works but **brin
 
 What does work, with Spotify never taking focus (also while minimized):
 
-- Spoco starts Spotify with `--remote-debugging-port=9229` and talks Chrome DevTools Protocol to its `xpui.app.spotify.com` page over `127.0.0.1` (`ClientWebSocket` + `JavaScriptSerializer`, both in .NET Framework).
+- Spotify Global Hotkeys starts Spotify with `--remote-debugging-port=9229` and talks Chrome DevTools Protocol to its `xpui.app.spotify.com` page over `127.0.0.1` (`ClientWebSocket` + `JavaScriptSerializer`, both in .NET Framework).
 - Navigation: React Router's `history` object (found by walking React's fiber tree from any DOM node) `.push('/album/<id>')` or `.push('/search/<text>/tracks')`. Changing `location` directly does nothing.
 - Playing: `.click()` on the row button `[data-testid="tracklist-row"] button[aria-label="Play <title> by <artist>"]`. Rows on screen before navigating are marked so a click can't hit the old page. The click starts playback directly.
 - Recording: `[data-testid="now-playing-widget"] a[href*="/album/"]` gives the exact title and album id, which also tells where the artist ends in the window title.
-- Spotify needs the flag: Jump's popup offers to (re)start Spotify (killed and relaunched `--minimized`, then Play resumes the song), and `StartSpotify=true` makes Spoco start it at login. The port only accepts local connections (Chromium rejects web-page origins), but any local program could control Spotify while it's open; the README says so.
+- Spotify needs the flag: Jump's popup offers to (re)start Spotify (killed and relaunched `--minimized`, then Play resumes the song), and `StartSpotify=true` makes Spotify Global Hotkeys start it at login. The port only accepts local connections (Chromium rejects web-page origins), but any local program could control Spotify while it's open; the README says so.
 - UI Automation, `spotify:` links and the focus guard are gone from the Windows code.
 
 The rest of this document (popup, history, ranking, macOS) stands; the "Windows details" section is kept for the record.
@@ -28,20 +28,20 @@ The rest of this document (popup, history, ranking, macOS) stands; the "Windows 
 | Decision | Choice | Why |
 |---|---|---|
 | Hotkey | `Jump=Ctrl+Shift+J`, configurable like the others | Winamp's J, next to the existing Ctrl+Shift+C/B/Z. |
-| Where songs come from | Spoco's own history, recorded while Spotify plays | Spotify's local files have track IDs but no names; the Web API is ruled out. Recording ourselves gives names, counts and recency, Atuin-style. |
+| Where songs come from | Spotify Global Hotkeys's own history, recorded while Spotify plays | Spotify's local files have track IDs but no names; the Web API is ruled out. Recording ourselves gives names, counts and recency, Atuin-style. |
 | Capturing on Windows | Window title change (`Artist - Title`) as the trigger; UI Automation reads the now-playing bar for exact title, artist and album link | Title changes are cheap to watch. The now-playing bar's title link exposes the album (`…/album/<id>`), which is what playback needs. Verified by hand against Spotify 1.3.9. |
 | Playing on Windows | Open `spotify:album:<id>`, press the row button `Play <title> by <artist>` via UI Automation, then send `APPCOMMAND_MEDIA_PLAY` | Opening a `spotify:` link only navigates; the row button loads the song in its album context but leaves it paused; Play starts it. All three verified by hand. Opening links doesn't steal focus (checked with WoW in the foreground). |
 | Capturing and playing on macOS | AppleScript: `current track`'s `id`, `name`, `artist`, `album`; `play track "spotify:track:<id>"` | Spotify's scripting dictionary has real track IDs and direct playback. No UI automation, no Accessibility permission. |
 | Matching | Fuzzy, space-separated terms in any order, ranked by match quality then frecency | Matches the Atuin feel: `doors storm` finds "Riders On The Storm". |
 | Search beyond history | Last row "Search Spotify for '<text>'" (Windows: plays the best matching song result; macOS: opens Spotify's search) | Reaches songs you've never played without the Web API. |
-| Code layout | Stays one file per platform (`Spoco.cs`, `Spoco.swift`) | Keeps `build.cmd` / `build.sh` unchanged. |
+| Code layout | Stays one file per platform (`SpotifyGlobalHotkeys.cs`, `SpotifyGlobalHotkeys.swift`) | Keeps `build.cmd` / `build.sh` unchanged. |
 | Order | Windows first, then macOS | Windows is the harder, riskier half; macOS reuses the popup design and history format. |
 
 ## The Jump popup (both platforms)
 
 - Borderless, topmost window centred on the monitor of the foreground window, roughly 600×360 px: a search box over a list of up to 10 rows. Dark/light follows the system.
 - Each row: **title**, artist · album in a dimmer colour, and on the right how long ago it was last played (`3 m`, `2 h`, `5 d`) and the play count when above 1.
-- Opening: Spoco remembers the foreground window, then activates the popup (on Windows the `WM_HOTKEY` message grants the right to call `SetForegroundWindow`). Pressing the hotkey again while open closes it.
+- Opening: Spotify Global Hotkeys remembers the foreground window, then activates the popup (on Windows the `WM_HOTKEY` message grants the right to call `SetForegroundWindow`). Pressing the hotkey again while open closes it.
 - Keys:
   - typing filters live; **Backspace**, **Ctrl+Backspace** (delete word), **Ctrl+U** (clear)
   - **↑/↓**, **Ctrl+P/Ctrl+N**, **PageUp/PageDown** move the selection
@@ -66,11 +66,11 @@ One line per distinct song, tab-separated, UTF-8, newest first, so the file is r
 - A play counts when the same song has been the current song for **20 seconds** while playing, so skipping through a playlist doesn't fill the history.
 - No limit: the history keeps every song ever played (one line each, about 65 bytes), so it grows by a few thousand songs a year at most.
 - Location:
-  - Windows: `SpocoHistory.tsv` next to `Spoco.exe` (same rule as `Spoco.ini`; the installer's uninstaller deletes it).
-  - macOS: `~/Library/Application Support/Spoco/history.tsv`.
+  - Windows: `SpotifyGlobalHotkeys-history.tsv` next to `SpotifyGlobalHotkeys.exe` (same rule as `SpotifyGlobalHotkeys.ini`; the installer's uninstaller deletes it).
+  - macOS: `~/Library/Application Support/Spotify Global Hotkeys/SpotifyGlobalHotkeys-history.tsv`.
 - Written at most every 30 seconds and on quit, via write-to-temp-then-rename so a crash never leaves a half file.
 - Settings window gets a **Clear history…** button (with a confirmation). The menu gets **Jump…** (shows its hotkey) above Settings.
-- Recording is always on while Spoco runs; nothing leaves the machine.
+- Recording is always on while Spotify Global Hotkeys runs; nothing leaves the machine.
 
 ## Ranking
 
@@ -121,14 +121,14 @@ Side effect, by design: Spotify's window ends up showing that album or search pa
 
 Superseded by `2026-11-15-macos-jump-design.md` (hybrid AppleScript + debugging port).
 
-- Capture: a 2-second timer runs (off the main thread) `tell application "Spotify" to if player state is playing then get {id, name, artist, album} of current track`, only when Spotify is running. Same 20-second rule. Uses the Automation permission Spoco already asks for.
+- Capture: a 2-second timer runs (off the main thread) `tell application "Spotify" to if player state is playing then get {id, name, artist, album} of current track`, only when Spotify is running. Same 20-second rule. Uses the Automation permission Spotify Global Hotkeys already asks for.
 - Play: `tell application "Spotify" to play track "<spotify:track:id>"`. AppleScript doesn't expose the album or playlist the song came from, so playback continues the way Spotify does for a single song (autoplay/radio) rather than with the album. Accepted.
 - "Search Spotify for …": `open location "spotify:search:<escaped text>"`. It can't start a result without the Accessibility permission, so on macOS this row just opens the search in Spotify (and brings it to the front). Labelled "Open Spotify search for '<text>'" there.
 - Popup: a regular (activating) `NSPanel` at `.floating` level, since it must take keyboard focus; it closes when it loses key status, and focus returns to the previous app with `NSRunningApplication.activate`.
 
 ## Config additions
 
-Both platforms gain one line in `Spoco.ini`:
+Both platforms gain one line in `SpotifyGlobalHotkeys.ini`:
 
 ```ini
 Jump=Ctrl+Shift+J

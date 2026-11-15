@@ -28,15 +28,15 @@ static class Program
         {
             if (!created) return 0;
             SetProcessDPIAware();
-            MigrateFromSpoco();
+            MigrateFromOldName();
             Application.EnableVisualStyles();
             Application.Run(new TrayApp());
         }
         return 0;
     }
 
-    // This app used to be called Spoco: carry its settings and Jump history over to the new names.
-    static void MigrateFromSpoco()
+    // Carry settings and Jump history saved under the app's old name over to the current names.
+    static void MigrateFromOldName()
     {
         var moves = new[,]
         {

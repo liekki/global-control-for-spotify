@@ -2,15 +2,15 @@
 
 ## Goal
 
-Ship Spoco for macOS with the same promise as on Windows: global hotkeys that play/pause, skip and go back in Spotify from anywhere, always reaching Spotify even when another app owns the system media controls. Keep the project's character: tiny, native, no dependencies, built from a single source file.
+Ship Spotify Global Hotkeys for macOS with the same promise as on Windows: global hotkeys that play/pause, skip and go back in Spotify from anywhere, always reaching Spotify even when another app owns the system media controls. Keep the project's character: tiny, native, no dependencies, built from a single source file.
 
-Success: a user downloads `Spoco-macOS.zip` from the GitHub release, opens `Spoco.app`, approves the one-time "control Spotify" prompt, and Ctrl+Shift+C/B/Z control Spotify system-wide. Settings, start-at-login and hand-editable config work like on Windows.
+Success: a user downloads `SpotifyGlobalHotkeys-macOS.zip` from the GitHub release, opens `Spotify Global Hotkeys.app`, approves the one-time "control Spotify" prompt, and Ctrl+Shift+C/B/Z control Spotify system-wide. Settings, start-at-login and hand-editable config work like on Windows.
 
 ## Decisions
 
 | Decision | Choice | Why |
 |---|---|---|
-| Language/toolkit | Swift + AppKit, one file `Spoco.swift`, compiled by `swiftc` from `build.sh` | Mirrors `Spoco.cs` + `build.cmd`; no Xcode project or packages; builds on stock `macos-latest`. |
+| Language/toolkit | Swift + AppKit, one file `SpotifyGlobalHotkeys.swift`, compiled by `swiftc` from `build.sh` | Mirrors `SpotifyGlobalHotkeys.cs` + `build.cmd`; no Xcode project or packages; builds on stock `macos-latest`. |
 | Global hotkeys | Carbon `RegisterEventHotKey` | System-wide, no Accessibility permission, reports conflicts (`eventHotKeyExistsErr`) like `RegisterHotKey`. |
 | Controlling Spotify | Apple Events via `NSAppleScript`: `playpause`, `next track`, `previous track` | Goes straight to Spotify regardless of who owns Now Playing. Sent only if Spotify is running (checked via `NSRunningApplication`, bundle id `com.spotify.client`), so hotkeys never launch it. Costs a one-time Automation prompt; `NSAppleEventsUsageDescription` explains it. |
 | Default hotkeys | Ctrl+Shift+C / Ctrl+Shift+B / Ctrl+Shift+Z | Same as Windows (Winamp layout); Mac apps use Cmd, so these rarely collide. |
@@ -18,11 +18,11 @@ Success: a user downloads `Spoco-macOS.zip` from the GitHub release, opens `Spoc
 | Architectures | Universal (arm64 + x86_64) | One download for all Macs; `swiftc -target` twice + `lipo`. |
 | Distribution | Unsigned (ad-hoc signed by `codesign -s -`) `.app`, zipped with `ditto`, attached to the existing GitHub release | No Apple Developer account. README explains right-click → Open (or System Settings → Privacy & Security → Open Anyway). |
 
-## Components (all in `Spoco.swift`)
+## Components (all in `SpotifyGlobalHotkeys.swift`)
 
 - **`main`** — single instance: if another process with our bundle id is running, activate nothing and exit. Sets activation policy `.accessory` (also `LSUIElement` in Info.plist) and runs `NSApplication`. `--selftest` runs the self-tests and exits with status 0/1 before any UI is created.
 - **`AppDelegate`** — owns the status item, hotkey registry, settings window and current config. `apply()` sets login item state, re-registers all hotkeys, rebuilds the menu and returns the labels that failed to register. On launch, failures are shown in an alert (no balloon equivalent worth the complexity).
-- **Menu** — `Play/Pause`, `Next`, `Previous` (each shows its hotkey as text, e.g. `⌃⇧C`, or `(none)`; clicking sends the command), separator, `Settings…` (Cmd+,), `Start at Login` (checkmark toggle), separator, `Quit Spoco`.
+- **Menu** — `Play/Pause`, `Next`, `Previous` (each shows its hotkey as text, e.g. `⌃⇧C`, or `(none)`; clicking sends the command), separator, `Settings…` (Cmd+,), `Start at Login` (checkmark toggle), separator, `Quit Spotify Global Hotkeys`.
 - **Status item icon** — a template image drawn in code (a small play-triangle-in-circle glyph) so it adapts to light/dark menu bars.
 - **`HotkeyCenter`** — wraps Carbon: installs one `kEventHotKeyPressed` handler on the application event target, `register(id:keyCode:modifiers:command:) -> Bool`, `unregisterAll()`. Dispatches pressed IDs to `Spotify.send`.
 - **`Spotify`** — `enum Command { playPause, next, previous }`, `send(_:)`: no-op if Spotify isn't running; otherwise runs the AppleScript off the main thread so a slow or prompting Spotify never blocks the menu.
@@ -33,16 +33,16 @@ Success: a user downloads `Spoco-macOS.zip` from the GitHub release, opens `Spoc
 
 ## Config file
 
-Path: `~/Library/Application Support/Spoco/Spoco.ini` (directory created on demand). Same line format as Windows (`;` comments, `Name=Value`, case-insensitive keys):
+Path: `~/Library/Application Support/Spotify Global Hotkeys/SpotifyGlobalHotkeys.ini` (directory created on demand). Same line format as Windows (`;` comments, `Name=Value`, case-insensitive keys):
 
 ```ini
-; Spoco hotkeys. Easiest to change from the menu bar icon: Settings...
+; Spotify Global Hotkeys hotkeys. Easiest to change from the menu bar icon: Settings...
 ; Modifiers: Ctrl, Option, Shift, Cmd. Leave empty to disable.
 PlayPause=Ctrl+Shift+C
 Next=Ctrl+Shift+B
 Previous=Ctrl+Shift+Z
 
-; true or false: launch Spoco when you log in.
+; true or false: launch Spotify Global Hotkeys when you log in.
 StartAtLogin=true
 ```
 
@@ -59,16 +59,16 @@ StartAtLogin=true
 ## Build (`build.sh`)
 
 1. `swiftc -O` for `arm64-apple-macos13` and `x86_64-apple-macos13`, `lipo` into one binary.
-2. Assemble `Spoco.app/Contents/{MacOS/Spoco, Info.plist, Resources/Spoco.icns}`. Info.plist: bundle id `io.github.liekki.spoco`, `LSUIElement`, `LSMinimumSystemVersion` 13.0, `NSAppleEventsUsageDescription`, version from `SPOCO_VERSION` env (default `0.0.0`).
-3. Icon: `sips` resizes `docs/logo.png` into an `.iconset`, `iconutil` makes `Spoco.icns`.
+2. Assemble `Spotify Global Hotkeys.app/Contents/{MacOS/SpotifyGlobalHotkeys, Info.plist, Resources/SpotifyGlobalHotkeys.icns}`. Info.plist: bundle id `io.github.liekki.spoco`, `LSUIElement`, `LSMinimumSystemVersion` 13.0, `NSAppleEventsUsageDescription`, version from `APP_VERSION` env (default `0.0.0`).
+3. Icon: `sips` resizes `docs/logo.png` into an `.iconset`, `iconutil` makes `SpotifyGlobalHotkeys.icns`.
 4. `codesign --force --deep -s -` (ad-hoc; required for arm64 and for the Automation permission to stick across launches of the same build).
-5. `ditto -c -k --keepParent Spoco.app dist/Spoco-macOS.zip`.
+5. `ditto -c -k --keepParent Spotify Global Hotkeys.app dist/SpotifyGlobalHotkeys-macOS.zip`.
 
-Build outputs (`Spoco.app`, `dist/`, intermediates under `build/`) are git-ignored.
+Build outputs (`Spotify Global Hotkeys.app`, `dist/`, intermediates under `build/`) are git-ignored.
 
 ## CI
 
-`.github/workflows/release.yml` gains a `macos` job on `macos-latest`: checkout, `SPOCO_VERSION=<tag or 0.0.0> ./build.sh`, `Spoco.app/Contents/MacOS/Spoco --selftest`, upload `dist/Spoco-macOS.zip` as an artifact. Release publishing moves to a `release` job that `needs: [build, macos]`, downloads both artifacts and runs `gh release create` with all three files. Windows job keeps building and uploading as now.
+`.github/workflows/release.yml` gains a `macos` job on `macos-latest`: checkout, `APP_VERSION=<tag or 0.0.0> ./build.sh`, `"Spotify Global Hotkeys.app/Contents/MacOS/SpotifyGlobalHotkeys" --selftest`, upload `dist/SpotifyGlobalHotkeys-macOS.zip` as an artifact. Release publishing moves to a `release` job that `needs: [build, macos]`, downloads both artifacts and runs `gh release create` with all three files. Windows job keeps building and uploading as now.
 
 ## Error handling
 
