@@ -136,10 +136,11 @@ struct Settings: Equatable {
     var hotkeys: [Action: String]
     var startAtLogin: Bool
     var startSpotify = false
+    var checkForUpdates = true
 }
 
 enum Config {
-    static let startAtLoginKey = "StartAtLogin", startSpotifyKey = "StartSpotify"
+    static let startAtLoginKey = "StartAtLogin", startSpotifyKey = "StartSpotify", checkForUpdatesKey = "CheckForUpdates"
 
     static var defaultURL: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -181,8 +182,9 @@ enum Config {
         let start = values[startAtLoginKey.lowercased()]?.lowercased()
         let startAtLogin = start == "true" ? true : start == "false" ? false : loginEnabled
         let spotify = values[startSpotifyKey.lowercased()]?.lowercased()
-        return (Settings(hotkeys: hotkeys, startAtLogin: startAtLogin, startSpotify: spotify == "true"),
-                text == nil || start == nil || spotify == nil, warnings)
+        let updates = values[checkForUpdatesKey.lowercased()]?.lowercased()
+        return (Settings(hotkeys: hotkeys, startAtLogin: startAtLogin, startSpotify: spotify == "true", checkForUpdates: updates != "false"),
+                text == nil || start == nil || spotify == nil || updates == nil, warnings)
     }
 
     static func save(_ settings: Settings, to url: URL) throws {
@@ -193,6 +195,8 @@ enum Config {
         s += "\(startAtLoginKey)=\(settings.startAtLogin)\n"
         s += "\n; true or false: start Spotify with the debugging port Jump uses for albums, search and playlist import (127.0.0.1 only).\n"
         s += "\(startSpotifyKey)=\(settings.startSpotify)\n"
+        s += "\n; true or false: once a day, ask GitHub whether there's a new version (it's only installed when you choose).\n"
+        s += "\(checkForUpdatesKey)=\(settings.checkForUpdates)\n"
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try s.write(to: url, atomically: true, encoding: .utf8)
     }
@@ -362,6 +366,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     var importProgress: String? // non-nil while importing playlists
     var importItem: NSMenuItem?
+    var update: Release? // a newer release, once a check found one
+    var checking = false, updating = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = menuBarIcon()
@@ -383,6 +389,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settings.startSpotify {
             DispatchQueue.global().async {
                 do { try SpotifyLauncher.ensureAtStartup() } catch let e as JumpError { HUD.show(e.message) } catch {}
+            }
+        }
+        // First check soon after starting, then daily.
+        Timer.scheduledTimer(withTimeInterval: 120, repeats: false) { [weak self] _ in
+            self?.dailyCheck()
+            Timer.scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { [weak self] _ in self?.dailyCheck() }
+        }
+    }
+
+    func dailyCheck() { if settings.checkForUpdates { checkForUpdates(manual: false) } }
+
+    // The daily check is quiet: a new version only shows up in the menu, never as a popup over what you're doing.
+    // Checking from the menu reports what it found.
+    func checkForUpdates(manual: Bool) {
+        guard !checking else { return }
+        checking = true
+        DispatchQueue.global().async {
+            var latest: Release?, failure: Error?
+            do { latest = try Updates.latest() } catch { failure = error }
+            DispatchQueue.main.async { [self] in
+                checking = false
+                if Updates.isNewer(latest) { update = latest; _ = apply() }
+                guard manual else { return }
+                if latest == nil {
+                    let reason = (failure as? JumpError)?.message ?? failure?.localizedDescription
+                    alert("Couldn't check for updates" + (reason.map { ": " + $0 } ?? "."))
+                } else if let latest, Updates.isNewer(latest) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    let a = NSAlert()
+                    a.messageText = "Version \(Updates.display(latest.version)) is available"
+                    a.informativeText = "You have \(Updates.display(Updates.current))."
+                    a.addButton(withTitle: "Update")
+                    a.addButton(withTitle: "Later")
+                    if a.runModal() == .alertFirstButtonReturn { installUpdate() }
+                } else if let latest, Updates.isDevelopmentBuild {
+                    alert("This is a development build, so it doesn't update itself. The latest release is \(Updates.display(latest.version)).")
+                } else {
+                    alert("You have the latest version (\(Updates.display(Updates.current))).")
+                }
+            }
+        }
+    }
+
+    @objc func checkForUpdatesFromMenu() { checkForUpdates(manual: true) }
+
+    @objc func installUpdate() {
+        guard let release = update, !updating else { return }
+        // Opened from Downloads (macOS runs it from a read-only copy) or a folder it can't write: let the user do it.
+        guard Updates.canReplace, !release.zip.isEmpty else {
+            if let page = URL(string: release.page.isEmpty ? "https://github.com/\(Updates.repo)/releases/latest" : release.page) {
+                NSWorkspace.shared.open(page)
+            }
+            return
+        }
+        updating = true
+        _ = apply()
+        HUD.show("Updating to version \(Updates.display(release.version))…")
+        DispatchQueue.global().async {
+            do {
+                try Updates.install(release)
+                // A helper swaps the app once this copy has quit, then opens the new version.
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            } catch {
+                DispatchQueue.main.async { [self] in
+                    updating = false
+                    _ = apply()
+                    alert("Couldn't update: " + ((error as? JumpError)?.message ?? error.localizedDescription))
+                }
             }
         }
     }
@@ -408,6 +482,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotkeyCenter.shared.unregisterAll()
         var failed: [String] = []
         let menu = NSMenu()
+        if let update {
+            let title = updating ? "Updating to Version \(Updates.display(update.version))…" : "Update to Version \(Updates.display(update.version))"
+            let item = NSMenuItem(title: title, action: updating ? nil : #selector(installUpdate), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
         for action in Action.allCases {
             let text = settings.hotkeys[action] ?? ""
             if let hotkey = HotkeyText.parse(text), !HotkeyCenter.shared.register(hotkey, for: action) {
@@ -436,6 +517,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         login.target = self
         login.state = LoginItem.isEnabled ? .on : .off
         menu.addItem(login)
+        let check = NSMenuItem(title: "Check for Updates…" + (Updates.isDevelopmentBuild ? "" : " (Version \(Updates.display(Updates.current)))"),
+                               action: #selector(checkForUpdatesFromMenu), keyEquivalent: "")
+        check.target = self
+        menu.addItem(check)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Spotify Global Hotkeys", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -593,6 +678,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var fields: [Action: HotkeyField] = [:]
     private let startAtLogin = NSButton(checkboxWithTitle: "Start at Login", target: nil, action: nil)
     private let startSpotify = NSButton(checkboxWithTitle: "Start Spotify with Jump support", target: nil, action: nil)
+    private let checkForUpdates = NSButton(checkboxWithTitle: "Check for updates once a day (installs only when you choose)", target: nil, action: nil)
     private let history: History
 
     init(settings: Settings, history: History) {
@@ -620,6 +706,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         startAtLogin.state = settings.startAtLogin ? .on : .off
         startSpotify.state = settings.startSpotify ? .on : .off
+        checkForUpdates.state = settings.checkForUpdates ? .on : .off
         startSpotify.toolTip = "When Spotify Global Hotkeys starts, start Spotify with the debugging port Jump uses for albums, search and playlist import (restarts a Spotify that just opened without it)."
         let clearHistory = NSButton(title: "Clear History…", target: self, action: #selector(clearHistory))
         let jumpRow = NSStackView(views: [startSpotify, clearHistory])
@@ -634,13 +721,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttons = NSStackView(views: [defaults, spacer, cancel, save])
 
-        let stack = NSStackView(views: [intro, grid, startAtLogin, jumpRow, buttons])
+        let stack = NSStackView(views: [intro, grid, startAtLogin, jumpRow, checkForUpdates, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         stack.setCustomSpacing(12, after: intro)
         stack.setCustomSpacing(8, after: startAtLogin)
+        stack.setCustomSpacing(8, after: jumpRow)
         buttons.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
 
         window.contentView = stack
@@ -687,7 +775,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         var hotkeys: [Action: String] = [:]
         for action in Action.allCases { hotkeys[action] = fields[action]!.hotkey }
-        result = Settings(hotkeys: hotkeys, startAtLogin: startAtLogin.state == .on, startSpotify: startSpotify.state == .on)
+        result = Settings(hotkeys: hotkeys, startAtLogin: startAtLogin.state == .on, startSpotify: startSpotify.state == .on,
+                          checkForUpdates: checkForUpdates.state == .on)
         window?.close()
     }
 
@@ -810,13 +899,28 @@ enum SelfTest {
                                                     .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: "Ctrl+Shift+PageDown"], startAtLogin: true, startSpotify: false), "defaults")
 
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? "; comment\n  playpause = cmd+opt+p \nNext=\nPrevious=Hyper+Q\n# other\nstartatlogin=FALSE\nStartSpotify=true\n".write(to: url, atomically: true, encoding: .utf8)
+        try? "; comment\n  playpause = cmd+opt+p \nNext=\nPrevious=Hyper+Q\n# other\nstartatlogin=FALSE\nStartSpotify=true\ncheckforupdates=False\n".write(to: url, atomically: true, encoding: .utf8)
         loaded = Config.load(from: url, loginEnabled: true)
         check(loaded.settings.hotkeys[.playPause] == "Option+Cmd+P", "canonical hotkey, got \(loaded.settings.hotkeys[.playPause] ?? "nil")")
         check(loaded.settings.hotkeys[.next] == "", "empty disables")
         check(loaded.settings.hotkeys[.previous] == "" && loaded.warnings.count == 1, "invalid hotkey warns")
         check(loaded.settings.startAtLogin == false && !loaded.needsSave, "StartAtLogin read")
         check(loaded.settings.startSpotify && loaded.settings.hotkeys[.jump] == "Ctrl+Shift+J", "StartSpotify read; missing Jump gets its default")
+        check(!loaded.settings.checkForUpdates, "CheckForUpdates read")
+        try? "StartAtLogin=true\nStartSpotify=false\n".write(to: url, atomically: true, encoding: .utf8)
+        loaded = Config.load(from: url, loginEnabled: false)
+        check(loaded.settings.checkForUpdates && loaded.needsSave, "missing CheckForUpdates means on, and gets written to the file")
+
+        check(Updates.parseVersion("v1.4.0") == [1, 4, 0] && Updates.parseVersion("1.4") == [1, 4, 0]
+              && [1, 9, 2].lexicographicallyPrecedes(Updates.parseVersion("v1.10.0")!), "release tags parse and compare as versions")
+        check(Updates.parseVersion("v1.5.0-beta") == nil && Updates.parseVersion("latest") == nil && Updates.parseVersion("") == nil
+              && Updates.parseVersion("1..2") == nil, "odd tags are ignored")
+        let release = Updates.parse(Data(#"{"tag_name":"v1.5.0","html_url":"https://github.com/x/y/releases/tag/v1.5.0","draft":false,"prerelease":false,"assets":[{"name":"SpotifyGlobalHotkeysSetup.exe","browser_download_url":"https://example/setup"},{"name":"SpotifyGlobalHotkeys-macOS.zip","browser_download_url":"https://example/zip"}]}"#.utf8))
+        check(release?.version == [1, 5, 0] && release?.zip == "https://example/zip" && release?.page.hasSuffix("/v1.5.0") == true,
+              "the latest release gives its version, page and Mac download")
+        check(Updates.parse(Data(#"{"tag_name":"v1.6.0","prerelease":true}"#.utf8)) == nil && Updates.parse(Data(#"{"tag_name":"v1.6.0"}"#.utf8))?.zip == ""
+              && Updates.parse(Data("[]".utf8)) == nil, "pre-releases are skipped; a release without the Mac download has none")
+        check(!Updates.isDevelopmentBuild || !Updates.isNewer(release), "a development build never offers updates")
 
         let settings = Settings(hotkeys: [.playPause: "F8", .next: "Ctrl+Option+Right", .previous: "", .jump: "", .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: ""],
                                 startAtLogin: true, startSpotify: true)

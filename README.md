@@ -55,6 +55,9 @@ StartWithWindows=true
 
 ; true or false: Spotify Global Hotkeys starts Spotify with the debugging port Jump needs (127.0.0.1 only).
 StartSpotify=false
+
+; true or false: once a day, ask GitHub whether there's a new version (it's only installed when you choose).
+CheckForUpdates=true
 ```
 
 Key names are the .NET [`Keys`](https://learn.microsoft.com/dotnet/api/system.windows.forms.keys) names, such as `F9`, `Space`, `OemPeriod` or `MediaPlayPause`. Leave a value empty to disable that action.
@@ -62,6 +65,18 @@ Key names are the .NET [`Keys`](https://learn.microsoft.com/dotnet/api/system.wi
 ## Start with Windows
 
 Toggle it from the tray menu, the Settings window, or `StartWithWindows` in `SpotifyGlobalHotkeys.ini`. Spotify Global Hotkeys adds itself to your user's startup list (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), so no admin rights are needed.
+
+## Updates
+
+Once a day Spotify Global Hotkeys asks GitHub for the latest release (one request to `api.github.com`; nothing about you or your music is sent). When there's a newer version, **Update to version …** appears at the top of the tray menu; nothing pops up and nothing installs until you click it. **Check for updates** in the menu checks right away. To turn the daily check off, untick it in Settings or set `CheckForUpdates=false`.
+
+- **Installed with the setup:** clicking Update downloads the new setup, quits, installs it in place (your settings, Jump history and autostart stay as they are) and starts the new version. No admin prompt.
+- **Portable copy:** Update opens the release page instead, so you can replace the exe yourself.
+- **Mac:** the same menu items. Update downloads the new app, replaces the one in Applications and reopens it. If the app runs from somewhere it can't replace itself (straight from Downloads), Update opens the release page instead. Because the Mac app isn't signed with an Apple Developer ID, macOS may ask again whether Spotify Global Hotkeys may control Spotify after an update.
+
+Updates come from this repository's GitHub releases over HTTPS. The builds aren't code-signed, so an update is exactly as trustworthy as downloading it from the Releases page yourself.
+
+Versions before 1.6.0 don't update themselves: install 1.6.0 or later once by hand.
 
 ## Jump (Windows)
 
@@ -114,6 +129,9 @@ StartAtLogin=true
 
 ; true or false: start Spotify with the debugging port Jump uses for albums, search and playlist import (127.0.0.1 only).
 StartSpotify=false
+
+; true or false: once a day, ask GitHub whether there's a new version (it's only installed when you choose).
+CheckForUpdates=true
 ```
 
 Modifiers are `Ctrl`, `Option`, `Shift` and `Cmd` (`Alt` and `Win` work too). Keys are letters, digits, `F1`–`F20`, `Space`, `Return`, `Tab`, `Escape`, `Delete`, `ForwardDelete`, `Home`, `End`, `PageUp`, `PageDown`, `Left`, `Right`, `Up`, `Down`, and `Minus`, `Equal`, `LeftBracket`, `RightBracket`, `Backslash`, `Semicolon`, `Quote`, `Comma`, `Period`, `Slash`, `Grave`. Letters mean the key's position on a US layout. Leave a value empty to disable that action.
@@ -137,7 +155,7 @@ Requires only Windows — it uses the C# compiler included with .NET Framework 4
 build.cmd
 ```
 
-This draws the icon (`MakeIcon.cs` → `app.ico`) and compiles `SpotifyGlobalHotkeys.exe`. To build the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run:
+This draws the icon (`MakeIcon.cs` → `app.ico`) and compiles `SpotifyGlobalHotkeys.exe`. Set `APP_VERSION` (e.g. `set APP_VERSION=1.6.0`) to stamp a version; builds without one are 0.0.0 and never offer updates. To build the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run:
 
 ```bat
 "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DAppVersion=1.0.0 installer\SpotifyGlobalHotkeys.iss
@@ -157,7 +175,7 @@ This builds a universal `Spotify Global Hotkeys.app` and `dist/SpotifyGlobalHotk
 
 ### Releasing
 
-GitHub Actions builds the Windows and macOS versions on every push. Pushing a version tag publishes them as a release:
+GitHub Actions builds the Windows and macOS versions on every push. Pushing a version tag publishes them as a release, stamped with that version (which is what the apps compare when they check for updates):
 
 ```bash
 git tag v1.0.0

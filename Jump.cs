@@ -1392,6 +1392,19 @@ static class SelfTest
         Check(Config.Repeats(Config.VolumeUpCommand) && !Config.Repeats(Config.JumpCommand) && Config.Label("VolumeDown") == "Volume down",
             "only volume hotkeys repeat while held");
 
+        Check(Updates.ParseVersion("v1.4.0") == new Version(1, 4, 0) && Updates.ParseVersion("1.4") == new Version(1, 4, 0)
+            && Updates.ParseVersion("v1.10.0") > Updates.ParseVersion("v1.9.2"), "release tags parse and compare as versions");
+        Check(Updates.ParseVersion("v1.5.0-beta") == null && Updates.ParseVersion("latest") == null && Updates.ParseVersion("") == null, "odd tags are ignored");
+        Release r = Updates.Parse("{\"tag_name\":\"v1.5.0\",\"html_url\":\"https://github.com/x/y/releases/tag/v1.5.0\",\"draft\":false,\"prerelease\":false,"
+            + "\"assets\":[{\"name\":\"SpotifyGlobalHotkeys.exe\",\"browser_download_url\":\"https://example/exe\"},"
+            + "{\"name\":\"SpotifyGlobalHotkeysSetup.exe\",\"browser_download_url\":\"https://example/setup\"}]}");
+        Check(r != null && r.Version == new Version(1, 5, 0) && r.Installer == "https://example/setup" && r.Page.EndsWith("/v1.5.0"),
+            "the latest release gives its version, page and installer");
+        Check(Updates.Parse("{\"tag_name\":\"v1.6.0\",\"prerelease\":true}") == null && Updates.Parse("{\"tag_name\":\"v1.6.0\"}").Installer == ""
+            && Updates.Parse("[]") == null, "pre-releases are skipped; a release without the installer has none");
+        Check(Updates.IsDevelopmentBuild == (Updates.Current == new Version(0, 0, 0)) && (!Updates.IsDevelopmentBuild || !Updates.IsNewer(r)),
+            "a development build never offers updates");
+
         Console.WriteLine(failures == 0 ? "All self-tests passed." : failures + " self-test(s) FAILED.");
         return failures == 0 ? 0 : 1;
     }

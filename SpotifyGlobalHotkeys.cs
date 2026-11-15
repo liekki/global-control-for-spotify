@@ -67,10 +67,12 @@ class TrayApp : ApplicationContext
     readonly Control ui = new Control(); // marshals background results back to this thread
     readonly Recorder recorder;
     readonly Timer saveTimer = new Timer { Interval = 30000 };
+    readonly Timer updateTimer = new Timer { Interval = 2 * 60 * 1000 }; // first check soon after starting, then daily
     Dictionary<string, string> hotkeys;
     SettingsForm settings;
     JumpForm jump;
-    bool importing;
+    Release update; // a newer release, once a check found one
+    bool importing, checking, updating;
 
     public TrayApp()
     {
@@ -104,6 +106,70 @@ class TrayApp : ApplicationContext
         // Jump needs Spotify started with its debugging port, so this app can start it (e.g. at login).
         if (hotkeys[Config.StartSpotify] == "true")
             RunInBackground(SpotifyLauncher.EnsureAtStartup);
+
+        updateTimer.Tick += delegate
+        {
+            updateTimer.Interval = 24 * 60 * 60 * 1000;
+            if (hotkeys[Config.CheckForUpdates] == "true") CheckForUpdates(false);
+        };
+        updateTimer.Start();
+    }
+
+    // The daily check is quiet: a new version only shows up in the tray menu, never as a popup over a game.
+    // Checking from the menu reports what it found.
+    void CheckForUpdates(bool manual)
+    {
+        if (checking) return;
+        checking = true;
+        var thread = new System.Threading.Thread(delegate()
+        {
+            Release latest = null;
+            Exception error = null;
+            try { latest = Updates.Latest(); }
+            catch (Exception e) { error = e; }
+            ui.BeginInvoke((Action)delegate
+            {
+                checking = false;
+                if (Updates.IsNewer(latest)) { update = latest; if (settings == null) Apply(); }
+                if (!manual) return;
+                if (error != null || latest == null)
+                    MessageBox.Show("Couldn't check for updates" + (error != null ? ": " + error.Message : "."), Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                else if (Updates.IsNewer(latest))
+                {
+                    if (MessageBox.Show("Version " + latest.Version + " is available (you have " + Updates.Current + "). Update now?", Program.Name,
+                            MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                        InstallUpdate();
+                }
+                else if (Updates.IsDevelopmentBuild)
+                    MessageBox.Show("This is a development build, so it doesn't update itself. The latest release is " + latest.Version + ".", Program.Name);
+                else
+                    MessageBox.Show("You have the latest version (" + Updates.Current + ").", Program.Name);
+            });
+        });
+        thread.IsBackground = true;
+        thread.Start();
+    }
+
+    void InstallUpdate()
+    {
+        if (update == null || updating) return;
+        // Not installed by the setup (e.g. run from Downloads): the setup would install a second copy, so let the user decide.
+        if (!Updates.Installed || update.Installer == "")
+        {
+            Process.Start(update.Page != "" ? update.Page : "https://github.com/" + Updates.Repo + "/releases/latest");
+            return;
+        }
+        updating = true;
+        Apply();
+        tray.ShowBalloonTip(3000, Program.Name, "Updating to version " + update.Version + "...", ToolTipIcon.Info);
+        Release release = update;
+        RunInBackground(delegate
+        {
+            try { Updates.Install(release); }
+            catch (Exception) { ui.BeginInvoke((Action)delegate { updating = false; Apply(); }); throw; }
+            // The setup waits for this app to close, then starts the new version.
+            ui.BeginInvoke((Action)delegate { ExitThread(); });
+        });
     }
 
     void OnHotkey(int command)
@@ -179,6 +245,15 @@ class TrayApp : ApplicationContext
         var menu = tray.ContextMenuStrip;
         menu.Items.Clear();
 
+        if (update != null)
+        {
+            var updateItem = new ToolStripMenuItem(updating ? "Updating to version " + update.Version + "..." : "Update to version " + update.Version,
+                null, delegate { InstallUpdate(); });
+            updateItem.Enabled = !updating;
+            menu.Items.Add(updateItem);
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
         for (int i = 0; i < Config.Names.Length; i++)
         {
             string name = Config.Names[i], text = hotkeys[name];
@@ -206,6 +281,8 @@ class TrayApp : ApplicationContext
             Apply();
         };
         menu.Items.Add(startup);
+        menu.Items.Add(new ToolStripMenuItem("Check for updates" + (Updates.IsDevelopmentBuild ? "" : " (version " + Updates.Current + ")"), null,
+            delegate { CheckForUpdates(true); }));
         menu.Items.Add("Exit", null, delegate { ExitThread(); });
         return failed;
     }
@@ -239,6 +316,7 @@ class TrayApp : ApplicationContext
         if (settings != null) settings.Close();
         recorder.Stop();
         saveTimer.Stop();
+        updateTimer.Stop();
         history.SaveIfDirty();
         tray.Visible = false;
         tray.Dispose();
@@ -250,7 +328,7 @@ class TrayApp : ApplicationContext
 class SettingsForm : Form
 {
     readonly Dictionary<string, HotkeyBox> boxes = new Dictionary<string, HotkeyBox>();
-    readonly CheckBox startWithWindows, startSpotify;
+    readonly CheckBox startWithWindows, startSpotify, checkForUpdates;
     public Dictionary<string, string> Result;
 
     public SettingsForm(Dictionary<string, string> current, History history)
@@ -308,6 +386,16 @@ class SettingsForm : Form
         layout.Controls.Add(startSpotify, 0, Config.Names.Length + 2);
         layout.SetColumnSpan(startSpotify, 3);
 
+        checkForUpdates = new CheckBox
+        {
+            Text = "Check for updates once a day (installs only when you choose)",
+            AutoSize = true,
+            Checked = current[Config.CheckForUpdates] == "true",
+            Margin = new Padding(3, 3, 3, 3)
+        };
+        layout.Controls.Add(checkForUpdates, 0, Config.Names.Length + 3);
+        layout.SetColumnSpan(checkForUpdates, 3);
+
         var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 12, 0, 0) };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
         var ok = new Button { Text = "Save", AutoSize = true };
@@ -328,7 +416,7 @@ class SettingsForm : Form
         buttons.Controls.Add(ok);
         buttons.Controls.Add(defaults);
         buttons.Controls.Add(clearHistory);
-        layout.Controls.Add(buttons, 0, Config.Names.Length + 3);
+        layout.Controls.Add(buttons, 0, Config.Names.Length + 4);
         layout.SetColumnSpan(buttons, 3);
 
         Controls.Add(layout);
@@ -355,6 +443,7 @@ class SettingsForm : Form
         foreach (var name in Config.Names) Result[name] = boxes[name].Hotkey;
         Result[Config.StartWithWindows] = startWithWindows.Checked ? "true" : "false";
         Result[Config.StartSpotify] = startSpotify.Checked ? "true" : "false";
+        Result[Config.CheckForUpdates] = checkForUpdates.Checked ? "true" : "false";
         DialogResult = DialogResult.OK;
         Close();
     }
@@ -661,6 +750,7 @@ static class Config
     public static bool Repeats(int command) { return command == VolumeUpCommand || command == VolumeDownCommand; }
     public const string StartWithWindows = "StartWithWindows";
     public const string StartSpotify = "StartSpotify";
+    public const string CheckForUpdates = "CheckForUpdates";
 
     public static Dictionary<string, string> Load(string path)
     {
@@ -708,7 +798,12 @@ static class Config
         values.TryGetValue(StartSpotify, out spotify);
         result[StartSpotify] = (spotify ?? "").Trim().ToLowerInvariant() == "true" ? "true" : "false";
 
-        if (!File.Exists(path) || start == null || migrated) Save(path, result);
+        string updates;
+        bool hasUpdates = values.TryGetValue(CheckForUpdates, out updates);
+        result[CheckForUpdates] = (updates ?? "").Trim().ToLowerInvariant() == "false" ? "false" : "true";
+
+        // Written back when something is missing, so every setting shows up in the file.
+        if (!File.Exists(path) || start == null || migrated || !hasUpdates) Save(path, result);
         return result;
     }
 
@@ -735,6 +830,9 @@ static class Config
         sb.AppendLine();
         sb.AppendLine("; true or false: " + Program.Name + " starts Spotify with the debugging port Jump needs (127.0.0.1 only).");
         sb.AppendLine(StartSpotify + "=" + hotkeys[StartSpotify]);
+        sb.AppendLine();
+        sb.AppendLine("; true or false: once a day, ask GitHub whether there's a new version (it's only installed when you choose).");
+        sb.AppendLine(CheckForUpdates + "=" + hotkeys[CheckForUpdates]);
         File.WriteAllText(path, sb.ToString());
     }
 

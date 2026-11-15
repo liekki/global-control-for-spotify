@@ -18,8 +18,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build SpotifyGlobalHotkeys.exe
-        shell: cmd
-        run: build.cmd
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:APP_VERSION = $env:GITHUB_REF_NAME.TrimStart('v') }
+          cmd /c build.cmd
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Self-test
         shell: pwsh

@@ -14,7 +14,7 @@ rm -rf "$APP" "$BUILD"
 mkdir -p "$BUILD" "$APP/Contents/MacOS" "$APP/Contents/Resources" dist
 
 for arch in arm64 x86_64; do
-    swiftc -O -swift-version 5 -target "$arch-apple-macos13" -o "$BUILD/$EXE-$arch" SpotifyGlobalHotkeys.swift Jump.swift
+    swiftc -O -swift-version 5 -target "$arch-apple-macos13" -o "$BUILD/$EXE-$arch" SpotifyGlobalHotkeys.swift Jump.swift Update.swift
 done
 lipo -create -output "$APP/Contents/MacOS/$EXE" "$BUILD/$EXE-arm64" "$BUILD/$EXE-x86_64"
 

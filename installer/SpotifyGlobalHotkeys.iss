@@ -47,6 +47,8 @@ Name: "{autodesktop}\Spotify Global Hotkeys"; Filename: "{app}\SpotifyGlobalHotk
 
 [Run]
 Filename: "{app}\SpotifyGlobalHotkeys.exe"; Description: "Start Spotify Global Hotkeys now"; Flags: nowait postinstall skipifsilent
+; The app's own updater runs this setup with /VERYSILENT /UPDATE and has quit by now: start the new version.
+Filename: "{app}\SpotifyGlobalHotkeys.exe"; Flags: nowait; Check: IsUpdate
 
 [UninstallDelete]
 Type: files; Name: "{app}\SpotifyGlobalHotkeys.ini"
@@ -58,6 +60,12 @@ Type: files; Name: "{app}\SpocoHistory.tsv"
 [Code]
 const
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+
+// Started by the app's "Update to version ..." (with /VERYSILENT /UPDATE).
+function IsUpdate: Boolean;
+begin
+  Result := WizardSilent and (Pos('/UPDATE', Uppercase(GetCmdTail)) > 0);
+end;
 
 procedure StopApp;
 var
@@ -110,7 +118,8 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then
+  // An update keeps the settings the app has now (they may have changed since this setup last ran).
+  if (CurStep = ssPostInstall) and not IsUpdate then
   begin
     RegDeleteValue(HKCU, RunKey, 'Spoco');
     if WizardIsTaskSelected('startup') then
