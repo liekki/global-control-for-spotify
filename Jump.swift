@@ -360,7 +360,7 @@ enum SpotifyPage {
     // React Router's history object, which isn't on window, so find it in React's component tree. Rows on
     // screen before navigating are marked, so a click can't land on the previous page while the new one renders.
     static let helper = #"""
-    if (!window.__sgh || window.__sgh.v !== 105) window.__sgh = (() => {
+    if (!window.__sgh || window.__sgh.v !== 106) window.__sgh = (() => {
       // Depth-first through React's component tree for the first props that pass `test`.
       const findProps = test => {
         const host = [...document.querySelectorAll('body *')].find(e => Object.keys(e).some(k => k.startsWith('__reactFiber$')));
@@ -389,7 +389,7 @@ enum SpotifyPage {
       };
       const rows = () => [...document.querySelectorAll('[data-testid="tracklist-row"] button[aria-label]')];
       return {
-        v: 105,
+        v: 106,
         // Your playlists (folders flattened) and Liked Songs, as [uri, name] pairs.
         async library() {
           const root = service('RootlistAPI');
@@ -433,6 +433,13 @@ enum SpotifyPage {
           }
           return fresh.length ? 'no-match' : 'loading';
         },
+        // Through Spotify's player service, which (unlike AppleScript's play track) leaves Spotify's window in the background.
+        async play(track, context) {
+          const p = service('PlayerAPI');
+          if (!p) return 'no-api';
+          await p.play({ uri: context || track }, {}, { skipTo: { uri: track } });
+          return 'ok';
+        },
         nowPlaying() {
           const w = document.querySelector('[data-testid="now-playing-widget"]');
           const a = w && w.querySelector('a[href*="/album/"]');
@@ -471,6 +478,11 @@ enum SpotifyPage {
     // wanted: (exact, label) pairs in order of preference, e.g. (true, "Play Lions by Dire Straits").
     static func click(_ wanted: [(Bool, String)]) throws -> String {
         try eval("__sgh.click(\(js(wanted.map { [$0.0, $0.1] as [Any] })))")
+    }
+
+    // Plays the track (in the album when given) without bringing Spotify forward. False when the service is missing.
+    static func play(track: String, context: String?) throws -> Bool {
+        try eval("__sgh.play(\(js(track)), \(js(context ?? "")))") == "ok"
     }
 
     static func nowPlaying() throws -> (title: String, albumURI: String)? {
@@ -663,9 +675,17 @@ enum Player {
                 return
             }
             if let track = link.track, Links.safe(track) {
+                let album = link.album.flatMap { Links.safe($0) ? $0 : nil }
+                if page, (try? SpotifyPage.play(track: track, context: album)) == true {
+                    try started(before, song.title)
+                    return
+                }
+                // Without Jump support: AppleScript can bring Spotify forward, so hand the front back afterwards.
+                let front = NSWorkspace.shared.frontmostApplication
                 var command = "play track \"\(track)\""
-                if let album = link.album, Links.safe(album) { command += " in context \"\(album)\"" }
+                if let album { command += " in context \"\(album)\"" }
                 Spotify.runSync(command)
+                defer { giveBackFront(front) }
                 try started(before, song.title)
                 return
             }
@@ -714,6 +734,13 @@ enum Player {
             Thread.sleep(forTimeInterval: 0.1)
         }
         return false
+    }
+
+    private static func giveBackFront(_ app: NSRunningApplication?) {
+        guard let app, app.bundleIdentifier != Spotify.bundleID else { return }
+        DispatchQueue.main.async {
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Spotify.bundleID { app.activate() }
+        }
     }
 
     // Normally the song just starts; if Spotify ends up paused, press Play.

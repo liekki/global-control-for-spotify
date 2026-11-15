@@ -139,3 +139,7 @@ Also fixed: on Windows, `SpotifyPage.AlbumId` only recognised `/album/` URLs, bu
 ## Out of scope
 
 Same as the main spec, plus Accessibility-based UI scripting of any kind.
+
+## Revision: playing without bringing Spotify forward
+
+Jump must not take focus. Reports show Spotify coming forward on a Jump. Running JavaScript in its page and moving its page both left the front app alone, which leaves AppleScript's `play track … in context …` as the likely cause. Meanwhile, Spotify's own `PlayerAPI.play({uri: context}, {}, {skipTo: {uri: track}})` starts the same song with Spotify left in the background (checked live). So with Jump support, songs with a track ID play through the helper's `play(track, context)`. AppleScript is only the fallback when the debugging port is off or the service is missing, and after it Jump hands the front back to the app you were in if Spotify took it.
