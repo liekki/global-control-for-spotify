@@ -65,7 +65,9 @@ Toggle it from the tray menu, the Settings window, or `StartWithWindows` in `Spo
 
 ## Jump (Windows)
 
-Winamp's **J** for Spotify, from anywhere: press `Ctrl+Shift+J`, type a few letters of a song you've played, press **Enter**, and Spotify plays it — continuing with the rest of its album. Your game or app keeps focus.
+Winamp's **J** for Spotify, from anywhere: press `Ctrl+Shift+J`, type a few letters of a song you've played, press **Enter**, and Spotify plays it — continuing with the rest of its playlist, or of its album. Your game or app keeps focus.
+
+What plays next: if you last played the song from one of your playlists (or Liked Songs), Jump plays it there, so that playlist carries on after it. A song you've never played from a playlist plays in the first playlist **Import playlists into Jump** found it in, and anything else in its album. Songs you queued yourself still come first, and shuffle and repeat work as usual. If the playlist no longer has the song, Jump falls back to the album.
 
 - Spotify Global Hotkeys remembers every song that plays for at least 20 seconds, with how often and how recently you played it (`SpotifyGlobalHotkeys-history.tsv` next to `SpotifyGlobalHotkeys.exe`; nothing leaves your PC). **Clear history...** in Settings forgets it.
 - Type words in any order (`doors storm`); matched letters are highlighted. **↑/↓** pick, **Enter** plays, **Esc** closes, **Ctrl+R** switches between *Recent* and *Most played*.
@@ -122,8 +124,8 @@ Works like [Jump on Windows](#jump-windows): press `⌃⇧J`, type a few letters
 
 - Songs are remembered after 20 seconds of play, in `~/Library/Application Support/Spotify Global Hotkeys/SpotifyGlobalHotkeys-history.tsv`. **Clear History…** in Settings forgets them.
 - **↑/↓** (or **⌃N/⌃P**) pick, **Enter** plays, **Esc** closes, **⌃R** switches between *Recent* and *Most played*, **⌃U** clears.
-- It works with Spotify as you normally start it: songs you've played are started through Spotify's AppleScript support (the same "control Spotify" permission the other hotkeys use), and continue with their album when Jump knows it.
-- **Restart Spotify with Jump support** (menu bar menu), or **Start Spotify with Jump support** in Settings, starts Spotify with the same local debugging port as on Windows (`127.0.0.1:9229`, with the same caveat: any program on your Mac could control Spotify while it's open). With it, Jump also learns each song's album, the **Search Spotify for "…"** row plays Spotify's top song (without it, that row just opens Spotify's search), and **Import playlists into Jump** adds the songs in your playlists and Liked Songs.
+- It works with Spotify as you normally start it: songs you've played are started through Spotify's AppleScript support (the same "control Spotify" permission the other hotkeys use), and continue with their playlist or album when Jump knows it, [as on Windows](#jump-windows).
+- **Restart Spotify with Jump support** (menu bar menu), or **Start Spotify with Jump support** in Settings, starts Spotify with the same local debugging port as on Windows (`127.0.0.1:9229`, with the same caveat: any program on your Mac could control Spotify while it's open). With it, Jump also learns each song's album and the playlist you played it from, the **Search Spotify for "…"** row plays Spotify's top song (without it, that row just opens Spotify's search), and **Import playlists into Jump** adds the songs in your playlists and Liked Songs.
 
 **How it works:** Spotify Global Hotkeys registers system-wide hotkeys with Carbon's `RegisterEventHotKey` (no Accessibility permission needed) and sends Spotify's own `playpause`, `next track` and `previous track` commands as Apple Events, so they reach Spotify even when a browser owns the Mac's media controls. If Spotify isn't running, the hotkeys do nothing. macOS only reports a hotkey conflict when the other app also claimed the combination exclusively, so if a hotkey seems dead, another app or a system shortcut may have it.
 

@@ -19,8 +19,10 @@ class Song
 {
     public long LastPlayed;  // unix seconds; 0 for a song only imported from a playlist
     public int Count;        // 0 for a song only imported from a playlist
-    public string Title = "", Artist = "", Album = "", Link = "";
-    public string Playlist = "";  // where an imported song came from (first playlist seen)
+    public string Title = "", Artist = "", Album = "", Link = "";  // Link: see Links
+    // The playlist Jump plays the song in: the one you last played it from, else the first one it was
+    // imported from. Name for showing, link (spotify:playlist:<id> or spotify:collection:tracks) for playing.
+    public string Playlist = "", PlaylistLink = "";
     public string FoldTitle, FoldArtist, FoldAlbum;  // lower-case, accents removed, same length as the originals
 
     public Song Fold()
@@ -39,8 +41,39 @@ class Song
     }
 }
 
+// The link column holds up to two URIs, as on macOS: "spotify:track:<id> spotify:album:<id>".
+static class Links
+{
+    public static string Track(string link) { return Find(link, "spotify:track:"); }
+    public static string Album(string link) { return Find(link, "spotify:album:"); }
+
+    static string Find(string link, string prefix)
+    {
+        foreach (string part in (link ?? "").Split(' '))
+            if (part.Length > prefix.Length && part.StartsWith(prefix, StringComparison.Ordinal)) return part;
+        return null;
+    }
+
+    public static string Make(string track, string album)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(track)) parts.Add(track);
+        if (!string.IsNullOrEmpty(album)) parts.Add(album);
+        return string.Join(" ", parts.ToArray());
+    }
+
+    // Keeps what's already known, adds what's new.
+    public static string Merge(string old, string add) { return Make(Track(old) ?? Track(add), Album(old) ?? Album(add)); }
+
+    // Contexts Jump plays a song in: playlists and Liked Songs.
+    public static bool IsPlaylist(string uri)
+    {
+        return uri != null && (uri == "spotify:collection:tracks" || (uri.Length > 17 && uri.StartsWith("spotify:playlist:", StringComparison.Ordinal)));
+    }
+}
+
 // One line per song, newest first, imported-but-unplayed songs last:
-// lastPlayed, count, title, artist, album, link, playlist (tab-separated).
+// lastPlayed, count, title, artist, album, link, playlist, playlist link (tab-separated).
 class History
 {
     readonly string path;
@@ -63,21 +96,26 @@ class History
     // Songs are never changed in place, so callers can use the copy from any thread.
     public List<Song> Snapshot() { lock (gate) return new List<Song>(songs); }
 
-    public void Record(string title, string artist, string album, string link, long now)
+    // playlistLink: the playlist (or Liked Songs) it's playing from, "" for an album, radio, search...
+    public void Record(string title, string artist, string album, string link, string playlist, string playlistLink, long now)
     {
         lock (gate)
         {
             int count = 0;
-            string keepLink = link, playlist = "";
-            int i = songs.FindIndex(s => s.SameSong(title, artist, album));
+            string keepLink = link;
+            string track = Links.Track(link);
+            // The same track can be spelled differently (the window's artist vs. the import's), so its ID wins.
+            int i = songs.FindIndex(s => (track != null && Links.Track(s.Link) == track) || s.SameSong(title, artist, album));
             if (i >= 0)
             {
                 count = songs[i].Count;
-                if (keepLink == "") keepLink = songs[i].Link;
-                playlist = songs[i].Playlist;
+                keepLink = Links.Merge(songs[i].Link, link);
+                // Played from an album or radio: it still belongs to the playlist it was last played from.
+                if (playlistLink == "") { playlist = songs[i].Playlist; playlistLink = songs[i].PlaylistLink; }
                 songs.RemoveAt(i);
             }
-            songs.Insert(0, new Song { LastPlayed = now, Count = count + 1, Title = title, Artist = artist, Album = album, Link = keepLink, Playlist = playlist }.Fold());
+            songs.Insert(0, new Song { LastPlayed = now, Count = count + 1, Title = title, Artist = artist, Album = album, Link = keepLink,
+                Playlist = playlist, PlaylistLink = playlistLink }.Fold());
             dirty = true;
         }
     }
@@ -88,22 +126,36 @@ class History
         lock (gate)
         {
             var known = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < songs.Count; i++) known[Key(songs[i])] = i;
+            var knownTracks = new Dictionary<string, int>();
+            for (int i = 0; i < songs.Count; i++)
+            {
+                known[Key(songs[i])] = i;
+                string t = Links.Track(songs[i].Link);
+                if (t != null) knownTracks[t] = i;
+            }
             int added = 0;
             foreach (var f in found)
             {
                 int i;
-                if (known.TryGetValue(Key(f), out i))
+                string track = Links.Track(f.Link);
+                if ((track != null && knownTracks.TryGetValue(track, out i)) || known.TryGetValue(Key(f), out i))
                 {
-                    // Already known: just fill in what's missing.
+                    // Already known: just fill in what's missing. A song without a playlist link gets this one,
+                    // unless it already names another playlist (from before playlist links were kept).
                     Song s = songs[i];
-                    if ((s.Link == "" && f.Link != "") || (s.Playlist == "" && s.Count == 0))
-                        songs[i] = new Song { LastPlayed = s.LastPlayed, Count = s.Count, Title = s.Title, Artist = s.Artist, Album = s.Album,
-                            Link = s.Link != "" ? s.Link : f.Link, Playlist = s.Playlist != "" ? s.Playlist : f.Playlist }.Fold();
+                    string link = Links.Merge(s.Link, f.Link);
+                    bool takePlaylist = s.PlaylistLink == "" && f.PlaylistLink != "" && (s.Playlist == "" || s.Playlist == f.Playlist);
+                    if (link != s.Link || takePlaylist)
+                    {
+                        songs[i] = new Song { LastPlayed = s.LastPlayed, Count = s.Count, Title = s.Title, Artist = s.Artist, Album = s.Album, Link = link,
+                            Playlist = takePlaylist ? f.Playlist : s.Playlist, PlaylistLink = takePlaylist ? f.PlaylistLink : s.PlaylistLink }.Fold();
+                        dirty = true;
+                    }
                     continue;
                 }
                 known[Key(f)] = songs.Count;
-                songs.Add(new Song { Title = f.Title, Artist = f.Artist, Album = f.Album, Link = f.Link, Playlist = f.Playlist }.Fold());
+                if (track != null) knownTracks[track] = songs.Count;
+                songs.Add(new Song { Title = f.Title, Artist = f.Artist, Album = f.Album, Link = f.Link, Playlist = f.Playlist, PlaylistLink = f.PlaylistLink }.Fold());
                 added++;
             }
             if (added > 0) dirty = true;
@@ -147,7 +199,7 @@ class History
             long last; int count;
             if (f.Length < 6 || !long.TryParse(f[0], out last) || !int.TryParse(f[1], out count) || f[2] == "") continue;
             result.Add(new Song { LastPlayed = last, Count = count, Title = f[2], Artist = f[3], Album = f[4], Link = f[5],
-                Playlist = f.Length > 6 ? f[6] : "" }.Fold());
+                Playlist = f.Length > 6 ? f[6] : "", PlaylistLink = f.Length > 7 && Links.IsPlaylist(f[7]) ? f[7] : "" }.Fold());
         }
         return result;
     }
@@ -158,7 +210,7 @@ class History
         for (int i = 0; i < songs.Count; i++)
         {
             Song s = songs[i];
-            lines[i] = s.LastPlayed + "\t" + s.Count + "\t" + Clean(s.Title) + "\t" + Clean(s.Artist) + "\t" + Clean(s.Album) + "\t" + Clean(s.Link) + "\t" + Clean(s.Playlist);
+            lines[i] = s.LastPlayed + "\t" + s.Count + "\t" + Clean(s.Title) + "\t" + Clean(s.Artist) + "\t" + Clean(s.Album) + "\t" + Clean(s.Link) + "\t" + Clean(s.Playlist) + "\t" + Clean(s.PlaylistLink);
         }
         return lines;
     }
@@ -242,18 +294,17 @@ class Recorder
         {
             try
             {
-                // With Jump support the now-playing widget gives the exact title and the album; it also
-                // tells where the artist ends, since either can contain " - ".
+                // With Jump support Spotify's player tells the exact title, the track and album, and the playlist
+                // it's playing from; the title also tells where the artist ends, since either can contain " - ".
                 NowPlaying info = null;
                 if (SpotifyPage.Available())
                 {
-                    try { info = SpotifyPage.ReadNowPlaying(""); } catch (JumpException) { }
-                    if (info != null && title.EndsWith(" - " + info.Title, StringComparison.Ordinal))
-                        info.Artist = title.Substring(0, title.Length - info.Title.Length - 3);
-                    else info = null;
+                    try { info = SpotifyPage.ReadNowPlaying(); } catch (JumpException) { }
+                    if (info == null || !title.EndsWith(" - " + info.Title, StringComparison.Ordinal)) info = null;
                 }
-                if (info == null) info = new NowPlaying { Title = song, Artist = artist, Link = "" };
-                history.Record(info.Title, info.Artist, "", info.Link, now);
+                if (info == null) history.Record(song, artist, "", "", "", "", now);
+                else history.Record(info.Title, title.Substring(0, title.Length - info.Title.Length - 3), "",
+                    Links.Make(info.Track, info.Album), info.Playlist, info.PlaylistLink, now);
             }
             catch (Exception) { } // Spotify closed mid-way: nothing worth recording
             finally { busy = false; }
@@ -637,7 +688,8 @@ class JumpException : Exception
 
 class NowPlaying
 {
-    public string Title, Artist, Link;
+    public string Title = "", Track = "", Album = "";  // URIs; Track is empty when only the page's widget answered
+    public string Playlist = "", PlaylistLink = "";    // empty unless it plays from a playlist or Liked Songs
 }
 
 // Spotify's desktop app is a web page in an embedded Chromium. Started with --remote-debugging-port,
@@ -657,7 +709,7 @@ static class SpotifyPage
     // playlist and library services are found the same way. Rows on screen before navigating are
     // marked, so a click can't land on the previous page while the new one renders.
     const string Helper = @"
-if (!window.__sgh || window.__sgh.v !== 5) window.__sgh = (() => {
+if (!window.__sgh || window.__sgh.v !== 6) window.__sgh = (() => {
   // Depth-first through React's component tree for the first props that pass `test`.
   const findProps = test => {
     const host = [...document.querySelectorAll('body *')].find(e => Object.keys(e).some(k => k.startsWith('__reactFiber$')));
@@ -678,7 +730,7 @@ if (!window.__sgh || window.__sgh.v !== 5) window.__sgh = (() => {
     if (!nav) { const p = findProps(p => p.history && typeof p.history.push === 'function'); nav = p && p.history; }
     return nav;
   };
-  // Spotify's internal services (playlists, library), registered under Symbol(<name>).
+  // Spotify's internal services (player, playlists, library), registered under Symbol(<name>).
   const service = name => {
     if (!registry) { const p = findProps(p => p.platform && typeof p.platform.getRegistry === 'function'); registry = p && p.platform.getRegistry(); }
     const key = registry && registry._map && [...registry._map.keys()].find(k => typeof k === 'symbol' && k.description === name);
@@ -686,7 +738,7 @@ if (!window.__sgh || window.__sgh.v !== 5) window.__sgh = (() => {
   };
   const rows = () => [...document.querySelectorAll('[data-testid=""tracklist-row""] button[aria-label]')];
   return {
-    v: 5,
+    v: 6,
     // Your playlists (folders flattened) and Liked Songs, as [uri, name] pairs.
     async library() {
       const root = service('RootlistAPI');
@@ -730,10 +782,42 @@ if (!window.__sgh || window.__sgh.v !== 5) window.__sgh = (() => {
       }
       return fresh.length ? 'no-match' : 'loading';
     },
-    nowPlaying() {
-      const w = document.querySelector('[data-testid=""now-playing-widget""]');
-      const a = w && w.querySelector('a[href*=""/album/""]');
-      return a ? a.textContent.trim() + '\n' + a.getAttribute('href') : '';
+    // Tries each context (playlist, album) until the player really plays the track, then the track alone.
+    async play(track, contexts) {
+      const p = service('PlayerAPI');
+      if (!p) return 'no-api';
+      for (const context of contexts.concat([''])) {
+        try { await p.play({ uri: context || track }, {}, { skipTo: { uri: track } }); } catch (e) { continue; }
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          const item = p.getState().item;
+          if (item && item.uri === track) return 'ok';
+        }
+      }
+      return 'other';
+    },
+    // [title, track, album, playlist name, playlist uri] from the player; the playlist only when the song
+    // plays from one (not from the queue or autoplay). Without the player, [title, album link] from the widget.
+    async nowPlaying() {
+      const p = service('PlayerAPI'), s = p && p.getState(), item = s && s.item;
+      if (!item) {
+        const w = document.querySelector('[data-testid=""now-playing-widget""]');
+        const a = w && w.querySelector('a[href*=""/album/""]');
+        return a ? JSON.stringify([a.textContent.trim(), a.getAttribute('href')]) : '';
+      }
+      const c = s.context || {}, m = c.metadata || {};
+      let name = '', list = '';
+      if (item.provider === 'context') {
+        // Liked Songs plays as a playlist of Spotify's own; keep the URI the library import uses.
+        if (m.format_list_type === 'liked-songs' || c.uri === p._likedSongsUri) { list = 'spotify:collection:tracks'; name = 'Liked Songs'; }
+        else if (/^spotify:playlist:/.test(c.uri || '')) {
+          list = c.uri;
+          name = m.context_description || '';
+          const pl = service('PlaylistAPI');
+          if (!name && pl) try { name = (await pl.getMetadata(list)).name || ''; } catch (e) { }
+        }
+      }
+      return JSON.stringify([item.name || '', item.uri || '', (item.album && item.album.uri) || '', name, list]);
     }
   };
 })();
@@ -763,12 +847,31 @@ if (!window.__sgh || window.__sgh.v !== 5) window.__sgh = (() => {
     // wanted: (exact, label) pairs in order of preference, e.g. (true, "Play Lions by Dire Straits").
     public static string Click(params object[][] wanted) { return Eval("__sgh.click(" + json.Serialize(wanted) + ")"); }
 
-    public static NowPlaying ReadNowPlaying(string artist)
+    public static NowPlaying ReadNowPlaying() { return ParseNowPlaying(Eval("__sgh.nowPlaying()")); }
+
+    // [title, track uri, album uri, playlist name, playlist uri] from the player, or [title, album link] from the widget.
+    public static NowPlaying ParseNowPlaying(string result)
     {
-        string[] parts = Eval("__sgh.nowPlaying()").Split('\n');
-        string id = parts.Length == 2 ? AlbumId(parts[1]) : null;
-        if (id == null) return null;
-        return new NowPlaying { Title = parts[0], Artist = artist, Link = "spotify:album:" + id };
+        object[] f = result == "" ? null : json.DeserializeObject(result) as object[];
+        if (f == null || f.Length < 2 || (string)f[0] == "") return null;
+        if (f.Length == 2)
+        {
+            string id = AlbumId((string)f[1]);
+            return id == null ? null : new NowPlaying { Title = (string)f[0], Album = "spotify:album:" + id };
+        }
+        if (f.Length < 5) return null;
+        var now = new NowPlaying { Title = (string)f[0] };
+        if (Links.Track((string)f[1]) == (string)f[1]) now.Track = (string)f[1];
+        if (Links.Album((string)f[2]) == (string)f[2]) now.Album = (string)f[2];
+        if (Links.IsPlaylist((string)f[4])) { now.Playlist = (string)f[3]; now.PlaylistLink = (string)f[4]; }
+        return now;
+    }
+
+    // Plays the track through Spotify's player in the first context that really has it (the player quietly
+    // starts another song when it doesn't), else on its own. Never brings Spotify forward. False without the player.
+    public static bool Play(string track, List<string> contexts)
+    {
+        return Eval("__sgh.play(" + json.Serialize(track) + ", " + json.Serialize(contexts.ToArray()) + ")", 15000) != "no-api";
     }
 
     // From a page link ("/album/<id>?…") or a history link ("spotify:album:<id>").
@@ -800,20 +903,21 @@ if (!window.__sgh || window.__sgh.v !== 5) window.__sgh = (() => {
     {
         string result = Eval("__sgh.songs(" + json.Serialize(uri) + ")", 60000);
         if (result == "no-api") throw new JumpException(Changed);
-        return ParseSongs(result, playlist);
+        return ParseSongs(result, playlist, uri);
     }
 
     // Rows are [title, artists, album name, album uri, track uri]. The album name stays empty, like the
     // recorder's (the window title has none), so a played and an imported copy are the same song.
-    public static List<Song> ParseSongs(string result, string playlist)
+    public static List<Song> ParseSongs(string result, string playlist, string playlistLink)
     {
         var songs = new List<Song>();
         foreach (object[] row in (object[])json.DeserializeObject(result))
         {
             if (row.Length < 4 || (string)row[0] == "") continue;
-            string album = (string)row[3];
+            string album = (string)row[3], track = row.Length > 4 ? (string)row[4] : "";
             songs.Add(new Song { Title = (string)row[0], Artist = (string)row[1],
-                Link = album.StartsWith("spotify:album:", StringComparison.Ordinal) ? album : "", Playlist = playlist });
+                Link = Links.Make(Links.Track(track) == track ? track : null, Links.Album(album) == album ? album : null),
+                Playlist = playlist, PlaylistLink = Links.IsPlaylist(playlistLink) ? playlistLink : "" });
         }
         return songs;
     }
@@ -999,16 +1103,13 @@ static class PlaylistImport
         foreach (var list in library)
         {
             progress("Importing " + list.Value + " (" + (++lists) + "/" + library.Count + ")");
-            // One playlist per turn, so a Jump in the meantime doesn't wait; one retry, since a call occasionally fails.
+            // One playlist per turn, so a Jump in the meantime doesn't wait; one retry, since a call occasionally
+            // fails, inside Spotify's page too (seen once in 92 playlists, fine the next time).
             List<Song> songs = null;
             Player.Exclusive(delegate
             {
                 try { songs = SpotifyPage.Songs(list.Key, list.Value); }
-                catch (JumpException e)
-                {
-                    if (e.Message == SpotifyPage.Changed) throw;
-                    songs = SpotifyPage.Songs(list.Key, list.Value);
-                }
+                catch (JumpException) { songs = SpotifyPage.Songs(list.Key, list.Value); }
             });
             found += songs.Count;
             added += history.Import(songs);
@@ -1038,6 +1139,17 @@ static class Player
                 return;
             }
 
+            // With its track ID: straight through Spotify's player, in its playlist so the rest of the playlist
+            // follows, else in its album.
+            string track = Links.Track(song.Link), album = Links.Album(song.Link);
+            if (track != null)
+            {
+                var contexts = new List<string>();
+                if (song.PlaylistLink != "") contexts.Add(song.PlaylistLink);
+                if (album != null) contexts.Add(album);
+                if (SpotifyPage.Play(track, contexts)) { Started(hwnd, before, song.Title); return; }
+            }
+
             var wanted = new[]
             {
                 new object[] { true, "Play " + song.Title + " by " + song.Artist },
@@ -1045,8 +1157,7 @@ static class Player
                 new object[] { false, "Play " + BaseTitle(song.Title) },
             };
             // From its album page the rest of the album follows; search covers songs recorded without one.
-            string album = SpotifyPage.AlbumId(song.Link);
-            bool clicked = album != null && GoAndClick("/album/" + album, wanted);
+            bool clicked = album != null && GoAndClick("/album/" + album.Substring(14), wanted);
             if (!clicked) clicked = GoAndClick(SearchPath(song.Artist + " " + song.Title), wanted);
             if (!clicked) throw new JumpException("Couldn't find “" + song.Title + "” in Spotify.");
             Started(hwnd, before, song.Title);
@@ -1118,9 +1229,11 @@ static class Player
 
     static bool IsLoaded(Song song)
     {
-        NowPlaying now = SpotifyPage.ReadNowPlaying("");
-        return now != null && string.Equals(now.Title, song.Title, StringComparison.OrdinalIgnoreCase)
-            && (song.Link == "" || now.Link == song.Link);
+        NowPlaying now = SpotifyPage.ReadNowPlaying();
+        if (now == null) return false;
+        string track = Links.Track(song.Link), album = Links.Album(song.Link);
+        if (track != null && now.Track != "") return now.Track == track;
+        return string.Equals(now.Title, song.Title, StringComparison.OrdinalIgnoreCase) && (album == null || now.Album == album);
     }
 
     static bool IsPlaying(string windowTitle)
@@ -1189,9 +1302,9 @@ static class SelfTest
         try
         {
             var h = new History(path);
-            h.Record("Sultans Of Swing", "Dire Straits", "", "spotify:album:2rCS6Xwx32V27pvgFzLzlT", 100);
-            h.Record("Tab\there", "New\nline", "", "", 200);
-            h.Record("sultans of swing", "dire straits", "", "", 300);
+            h.Record("Sultans Of Swing", "Dire Straits", "", "spotify:album:2rCS6Xwx32V27pvgFzLzlT", "", "", 100);
+            h.Record("Tab\there", "New\nline", "", "", "", "", 200);
+            h.Record("sultans of swing", "dire straits", "", "", "", "", 300);
             h.SaveIfDirty();
             File.AppendAllText(path, "not a valid line\n");
             var loaded = new History(path).Snapshot();
@@ -1199,33 +1312,72 @@ static class SelfTest
             Check(loaded.Count == 2 && loaded[0].Count == 2 && loaded[0].LastPlayed == 300 && loaded[0].Link == "spotify:album:2rCS6Xwx32V27pvgFzLzlT",
                 "replay bumps count and time, keeps the album link");
             Check(loaded.Count == 2 && loaded[1].Title == "Tab here" && loaded[1].Artist == "New line", "tabs and newlines are stripped");
-            for (int i = 0; i < 6000; i++) h.Record("Song " + i, "Artist", "", "", 1000 + i);
+            for (int i = 0; i < 6000; i++) h.Record("Song " + i, "Artist", "", "", "", "", 1000 + i);
             Check(h.Count == 6002 && h.Snapshot()[0].Title == "Song 5999", "history keeps growing past the old 5000 limit");
 
+            string both = Links.Make("spotify:track:T1", "spotify:album:A1");
+            Check(both == "spotify:track:T1 spotify:album:A1" && Links.Track(both) == "spotify:track:T1" && Links.Album(both) == "spotify:album:A1"
+                && Links.Album("spotify:album:A1") == "spotify:album:A1" && Links.Track("spotify:album:A1") == null, "two-URI link parses, as on macOS");
+            Check(Links.Merge("spotify:track:T1", "spotify:track:T2 spotify:album:A2") == "spotify:track:T1 spotify:album:A2" && Links.Merge("", "") == "",
+                "merging keeps known URIs, adds new ones");
+            Check(Links.IsPlaylist("spotify:playlist:P1") && Links.IsPlaylist("spotify:collection:tracks") && !Links.IsPlaylist("spotify:album:A1")
+                && !Links.IsPlaylist("spotify:playlist:") && !Links.IsPlaylist(""), "only playlists and Liked Songs are playlist links");
+
             var p = new History(null);
-            p.Record("Lions", "Dire Straits", "", "", 500);
+            p.Record("Lions", "Dire Straits", "", "", "", "", 500);
             int added = p.Import(new[]
             {
-                new Song { Title = "Lions", Artist = "Dire Straits", Link = "spotify:album:2rCS6Xwx32V27pvgFzLzlT", Playlist = "Rock" },
-                new Song { Title = "Jolene - Piano Version", Artist = "Pianaura", Link = "spotify:album:6cM30O4QxjHvhu0GM1ELZe", Playlist = "Liked Songs" },
-                new Song { Title = "Jolene - Piano Version", Artist = "Pianaura", Link = "", Playlist = "Piano" },
+                new Song { Title = "Lions", Artist = "Dire Straits", Link = "spotify:track:L1 spotify:album:2rCS6Xwx32V27pvgFzLzlT", Playlist = "Rock", PlaylistLink = "spotify:playlist:R1" },
+                new Song { Title = "Jolene - Piano Version", Artist = "Pianaura", Link = "spotify:album:6cM30O4QxjHvhu0GM1ELZe", Playlist = "Liked Songs", PlaylistLink = "spotify:collection:tracks" },
+                new Song { Title = "Jolene - Piano Version", Artist = "Pianaura", Link = "", Playlist = "Piano", PlaylistLink = "spotify:playlist:P1" },
             });
             var imported = p.Snapshot();
             Check(added == 1 && imported.Count == 2, "import adds only new songs, once");
-            Check(imported[0].Title == "Lions" && imported[0].Count == 1 && imported[0].Link == "spotify:album:2rCS6Xwx32V27pvgFzLzlT",
-                "import fills in a played song's album link but leaves its plays alone");
-            Check(imported[1].Count == 0 && imported[1].LastPlayed == 0 && imported[1].Playlist == "Liked Songs", "imported song is unplayed, from its first playlist");
+            Check(imported[0].Title == "Lions" && imported[0].Count == 1 && imported[0].Link == "spotify:track:L1 spotify:album:2rCS6Xwx32V27pvgFzLzlT",
+                "import fills in a played song's links but leaves its plays alone");
+            Check(imported[0].Playlist == "Rock" && imported[0].PlaylistLink == "spotify:playlist:R1", "a played song without a playlist gets the imported one");
+            Check(imported[1].Count == 0 && imported[1].LastPlayed == 0 && imported[1].Playlist == "Liked Songs" && imported[1].PlaylistLink == "spotify:collection:tracks",
+                "imported song is unplayed, from its first playlist");
             Check(Ranker.Rank(imported, "", false, now)[0].Song.Title == "Lions" && Ranker.Rank(imported, "", true, now)[0].Song.Title == "Lions",
                 "played songs rank above imported ones");
-            p.Record("Jolene - Piano Version", "Pianaura", "", "", 600);
-            Check(p.Snapshot()[0].Title == "Jolene - Piano Version" && p.Snapshot()[0].Count == 1 && p.Snapshot()[0].Link != "",
-                "playing an imported song makes it a normal one");
             var round = History.Parse(History.Format(imported));
-            Check(round[1].Playlist == "Liked Songs" && History.Parse(new[] { "5\t1\tOld\tFormat\t\t" })[0].Playlist == "", "playlist survives saving; old 6-column lines still load");
+            Check(round[1].Playlist == "Liked Songs" && round[1].PlaylistLink == "spotify:collection:tracks" && round[0].PlaylistLink == "spotify:playlist:R1",
+                "playlist and its link survive saving");
+
+            p.Record("Jolene - Piano Version", "Pianaura", "", "", "", "", 600);
+            Check(p.Snapshot()[0].Title == "Jolene - Piano Version" && p.Snapshot()[0].Count == 1 && p.Snapshot()[0].Link != ""
+                && p.Snapshot()[0].PlaylistLink == "spotify:collection:tracks", "playing an imported song makes it a normal one that keeps its playlist");
+            p.Record("Lions", "Dire Straits, Someone", "", "spotify:track:L1 spotify:album:X", "Road trip", "spotify:playlist:T1", 700);
+            Check(p.Count == 2 && p.Snapshot()[0].Count == 2 && p.Snapshot()[0].Link == "spotify:track:L1 spotify:album:2rCS6Xwx32V27pvgFzLzlT"
+                && p.Snapshot()[0].Playlist == "Road trip" && p.Snapshot()[0].PlaylistLink == "spotify:playlist:T1",
+                "recording matches by track ID and moves the song to the playlist it was played from");
+            p.Import(new[] { new Song { Title = "Lions", Artist = "Dire Straits", Link = "spotify:track:L1", Playlist = "Rock", PlaylistLink = "spotify:playlist:R1" } });
+            Check(p.Snapshot()[0].PlaylistLink == "spotify:playlist:T1", "importing again doesn't take a song away from where it was played");
+
+            var old = new History(null);
+            old.Import(new[] { new Song { Title = "Old", Artist = "Import", Playlist = "Piano" } });
+            old.Import(new[] { new Song { Title = "Old", Artist = "Import", Playlist = "Rock", PlaylistLink = "spotify:playlist:R1" },
+                               new Song { Title = "Old", Artist = "Import", Playlist = "Piano", PlaylistLink = "spotify:playlist:P1" } });
+            Check(old.Snapshot()[0].Playlist == "Piano" && old.Snapshot()[0].PlaylistLink == "spotify:playlist:P1",
+                "re-importing an older history fills in the link of the playlist it already names");
+
+            var legacy = History.Parse(new[] { "5\t1\tOld\tFormat\t\t", "6\t1\tSeven\tColumns\t\tspotify:album:A1\tRock", "7\t1\tBad\tLink\t\t\tX\tnot-a-uri" });
+            Check(legacy.Count == 3 && legacy[0].Playlist == "" && legacy[1].Playlist == "Rock" && legacy[1].PlaylistLink == "" && legacy[2].PlaylistLink == "",
+                "old 6- and 7-column lines still load; odd playlist links are dropped");
             var parsed = SpotifyPage.ParseSongs("[[\"Lions\",\"Dire Straits\",\"Dire Straits\",\"spotify:album:2rCS6Xwx32V27pvgFzLzlT\",\"spotify:track:L1\"],"
-                + "[\"\",\"x\",\"y\",\"spotify:album:A2\",\"\"],[\"Odd\",\"Someone\",\"\",\"not-a-uri\",\"\"]]", "Rock");
-            Check(parsed.Count == 2 && parsed[0].Title == "Lions" && parsed[0].Album == "" && parsed[0].Link == "spotify:album:2rCS6Xwx32V27pvgFzLzlT"
-                && parsed[0].Playlist == "Rock" && parsed[1].Link == "", "imported songs parse; untitled rows and odd URIs are dropped");
+                + "[\"\",\"x\",\"y\",\"spotify:album:A2\",\"\"],[\"Odd\",\"Someone\",\"\",\"not-a-uri\",\"\"]]", "Rock", "spotify:playlist:R1");
+            Check(parsed.Count == 2 && parsed[0].Title == "Lions" && parsed[0].Album == "" && parsed[0].Link == "spotify:track:L1 spotify:album:2rCS6Xwx32V27pvgFzLzlT"
+                && parsed[0].Playlist == "Rock" && parsed[0].PlaylistLink == "spotify:playlist:R1" && parsed[1].Link == "",
+                "imported songs parse with their track and playlist; untitled rows and odd URIs are dropped");
+
+            NowPlaying np = SpotifyPage.ParseNowPlaying("[\"Lions\",\"spotify:track:L1\",\"spotify:album:A1\",\"Rock\",\"spotify:playlist:R1\"]");
+            Check(np != null && np.Title == "Lions" && np.Track == "spotify:track:L1" && np.Album == "spotify:album:A1" && np.Playlist == "Rock"
+                && np.PlaylistLink == "spotify:playlist:R1", "the player's now playing parses");
+            np = SpotifyPage.ParseNowPlaying("[\"Lions\",\"spotify:track:L1\",\"spotify:album:A1\",\"Lions Radio\",\"spotify:artist:X\"]");
+            Check(np != null && np.PlaylistLink == "" && np.Playlist == "", "playing from something other than a playlist records no playlist");
+            np = SpotifyPage.ParseNowPlaying("[\"Lions\",\"/album/A1?x\"]");
+            Check(np != null && np.Album == "spotify:album:A1" && np.Track == "" && SpotifyPage.ParseNowPlaying("") == null,
+                "the widget's now playing still parses");
         }
         finally { File.Delete(path); }
 

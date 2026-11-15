@@ -13,7 +13,9 @@ struct Song {
     var lastPlayed: Int64 = 0  // unix seconds; 0 for a song only imported from a playlist
     var count = 0              // 0 for a song only imported from a playlist
     var title = "", artist = "", album = "", link = ""
-    var playlist = ""          // where an imported song came from (first playlist seen)
+    // The playlist Jump plays the song in: the one you last played it from, else the first one it was
+    // imported from. Name for showing, link (spotify:playlist:<id> or spotify:collection:tracks) for playing.
+    var playlist = "", playlistLink = ""
     // Lower-case, accents removed, as UTF-16 with the same length as the originals (so matches map back).
     var foldTitle: [UInt16] = [], foldArtist: [UInt16] = [], foldAlbum: [UInt16] = []
 
@@ -58,6 +60,11 @@ enum Links {
 
     static func uri(_ url: String?, kind: String) -> String? { id(url, kind: kind).map { "spotify:\(kind):\($0)" } }
 
+    // Contexts Jump plays a song in: playlists and Liked Songs.
+    static func isPlaylist(_ uri: String) -> Bool {
+        uri == "spotify:collection:tracks" || (uri.hasPrefix("spotify:playlist:") && uri.count > "spotify:playlist:".count)
+    }
+
     // Only what can appear in a Spotify URI, so it can go into an AppleScript string safely.
     static func safe(_ uri: String) -> Bool { !uri.isEmpty && uri.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == ":") } }
 }
@@ -97,7 +104,7 @@ enum Strings {
 // MARK: - History
 
 // One line per song, newest first, imported-but-unplayed songs last:
-// lastPlayed, count, title, artist, album, link, playlist (tab-separated).
+// lastPlayed, count, title, artist, album, link, playlist, playlist link (tab-separated).
 final class History {
     let url: URL?
     private let gate = NSLock(), saving = NSLock()
@@ -119,18 +126,21 @@ final class History {
     // Songs are values, so the copy can be used from any thread.
     func snapshot() -> [Song] { gate.lock(); defer { gate.unlock() }; return songs }
 
-    func record(title: String, artist: String, album: String, link: String, now: Int64) {
+    // playlistLink: the playlist (or Liked Songs) it's playing from, "" for an album, radio, search...
+    func record(title: String, artist: String, album: String, link: String, playlist: String = "", playlistLink: String = "", now: Int64) {
         gate.lock(); defer { gate.unlock() }
-        var count = 0, keepLink = link, playlist = ""
+        var count = 0, keepLink = link, playlist = playlist, playlistLink = playlistLink
         let key = Song(title: title, artist: artist, album: album).key, track = Links.parse(link).track
         // The same track can be spelled differently (AppleScript's artist vs. the import's "A, B"), so its ID wins.
         if let i = songs.firstIndex(where: { (track != nil && Links.parse($0.link).track == track) || $0.key == key }) {
             count = songs[i].count
             keepLink = Links.merge(songs[i].link, link)
-            playlist = songs[i].playlist
+            // Played from an album or radio: it still belongs to the playlist it was last played from.
+            if playlistLink.isEmpty { playlist = songs[i].playlist; playlistLink = songs[i].playlistLink }
             songs.remove(at: i)
         }
-        songs.insert(Song(lastPlayed: now, count: count + 1, title: title, artist: artist, album: album, link: keepLink, playlist: playlist).folded(), at: 0)
+        songs.insert(Song(lastPlayed: now, count: count + 1, title: title, artist: artist, album: album, link: keepLink,
+                          playlist: playlist, playlistLink: playlistLink).folded(), at: 0)
         dirty = true
     }
 
@@ -146,12 +156,14 @@ final class History {
         for f in found {
             let track = Links.parse(f.link).track
             if let i = track.flatMap({ knownTracks[$0] }) ?? known[f.key] {
-                // Already known: just fill in what's missing.
+                // Already known: just fill in what's missing. A song without a playlist link gets this one,
+                // unless it already names another playlist (from before playlist links were kept).
                 var s = songs[i]
                 let link = Links.merge(s.link, f.link)
-                let playlist = s.playlist.isEmpty && s.count == 0 ? f.playlist : s.playlist
-                if link != s.link || playlist != s.playlist {
-                    s.link = link; s.playlist = playlist
+                let takePlaylist = s.playlistLink.isEmpty && !f.playlistLink.isEmpty && (s.playlist.isEmpty || s.playlist == f.playlist)
+                if link != s.link || takePlaylist {
+                    s.link = link
+                    if takePlaylist { s.playlist = f.playlist; s.playlistLink = f.playlistLink }
                     songs[i] = s
                     dirty = true
                 }
@@ -159,7 +171,7 @@ final class History {
             }
             known[f.key] = songs.count
             if let track { knownTracks[track] = songs.count }
-            songs.append(Song(title: f.title, artist: f.artist, album: f.album, link: f.link, playlist: f.playlist).folded())
+            songs.append(Song(title: f.title, artist: f.artist, album: f.album, link: f.link, playlist: f.playlist, playlistLink: f.playlistLink).folded())
             added += 1
         }
         if added > 0 { dirty = true }
@@ -192,7 +204,7 @@ final class History {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 6, let last = Int64(f[0]), let count = Int(f[1]), !f[2].isEmpty else { continue }
             result.append(Song(lastPlayed: last, count: count, title: f[2], artist: f[3], album: f[4], link: f[5],
-                               playlist: f.count > 6 ? f[6] : "").folded())
+                               playlist: f.count > 6 ? f[6] : "", playlistLink: f.count > 7 && Links.isPlaylist(f[7]) ? f[7] : "").folded())
         }
         return result
     }
@@ -200,7 +212,7 @@ final class History {
     static func format(_ songs: [Song]) -> String {
         var s = ""
         for x in songs {
-            s += "\(x.lastPlayed)\t\(x.count)\t\(Strings.clean(x.title))\t\(Strings.clean(x.artist))\t\(Strings.clean(x.album))\t\(Strings.clean(x.link))\t\(Strings.clean(x.playlist))\n"
+            s += "\(x.lastPlayed)\t\(x.count)\t\(Strings.clean(x.title))\t\(Strings.clean(x.artist))\t\(Strings.clean(x.album))\t\(Strings.clean(x.link))\t\(Strings.clean(x.playlist))\t\(Strings.clean(x.playlistLink))\n"
         }
         return s
     }
@@ -233,11 +245,15 @@ final class Recorder {
         lastRecorded = state.id
         let now = Strings.now()
         DispatchQueue.global().async { [history] in
-            // With Jump support, the now-playing widget also tells which album it's from.
-            var album: String?
-            if SpotifyPage.available(), let np = try? SpotifyPage.nowPlaying(), np.title == state.name { album = np.albumURI }
+            // With Jump support, Spotify's player also tells the album and the playlist it's playing from.
+            var album: String?, playlist = "", playlistLink = ""
+            if SpotifyPage.available(), let np = try? SpotifyPage.nowPlaying(), np.title == state.name, np.track.isEmpty || np.track == state.id {
+                album = np.album
+                playlist = np.playlist; playlistLink = np.playlistLink
+            }
             let track = state.id.hasPrefix("spotify:track:") ? state.id : nil // local files have no usable ID
-            history.record(title: state.name, artist: state.artist, album: state.album, link: Links.make(track: track, album: album), now: now)
+            history.record(title: state.name, artist: state.artist, album: state.album, link: Links.make(track: track, album: album),
+                           playlist: playlist, playlistLink: playlistLink, now: now)
         }
     }
 }
@@ -360,7 +376,7 @@ enum SpotifyPage {
     // React Router's history object, which isn't on window, so find it in React's component tree. Rows on
     // screen before navigating are marked, so a click can't land on the previous page while the new one renders.
     static let helper = #"""
-    if (!window.__sgh || window.__sgh.v !== 106) window.__sgh = (() => {
+    if (!window.__sgh || window.__sgh.v !== 107) window.__sgh = (() => {
       // Depth-first through React's component tree for the first props that pass `test`.
       const findProps = test => {
         const host = [...document.querySelectorAll('body *')].find(e => Object.keys(e).some(k => k.startsWith('__reactFiber$')));
@@ -381,7 +397,7 @@ enum SpotifyPage {
         if (!nav) { const p = findProps(p => p.history && typeof p.history.push === 'function'); nav = p && p.history; }
         return nav;
       };
-      // Spotify's internal services (playlists, library), registered under Symbol(<name>).
+      // Spotify's internal services (player, playlists, library), registered under Symbol(<name>).
       const service = name => {
         if (!registry) { const p = findProps(p => p.platform && typeof p.platform.getRegistry === 'function'); registry = p && p.platform.getRegistry(); }
         const key = registry && registry._map && [...registry._map.keys()].find(k => typeof k === 'symbol' && k.description === name);
@@ -389,7 +405,7 @@ enum SpotifyPage {
       };
       const rows = () => [...document.querySelectorAll('[data-testid="tracklist-row"] button[aria-label]')];
       return {
-        v: 106,
+        v: 107,
         // Your playlists (folders flattened) and Liked Songs, as [uri, name] pairs.
         async library() {
           const root = service('RootlistAPI');
@@ -434,16 +450,43 @@ enum SpotifyPage {
           return fresh.length ? 'no-match' : 'loading';
         },
         // Through Spotify's player service, which (unlike AppleScript's play track) leaves Spotify's window in the background.
-        async play(track, context) {
+        // Tries each context (playlist, album) until the player really plays the track (it quietly starts another
+        // song when the context doesn't have it), then the track alone.
+        async play(track, contexts) {
           const p = service('PlayerAPI');
           if (!p) return 'no-api';
-          await p.play({ uri: context || track }, {}, { skipTo: { uri: track } });
-          return 'ok';
+          for (const context of contexts.concat([''])) {
+            try { await p.play({ uri: context || track }, {}, { skipTo: { uri: track } }); } catch (e) { continue; }
+            for (let i = 0; i < 20; i++) {
+              await new Promise(r => setTimeout(r, 100));
+              const item = p.getState().item;
+              if (item && item.uri === track) return 'ok';
+            }
+          }
+          return 'other';
         },
-        nowPlaying() {
-          const w = document.querySelector('[data-testid="now-playing-widget"]');
-          const a = w && w.querySelector('a[href*="/album/"]');
-          return a ? a.textContent.trim() + '\n' + a.getAttribute('href') : '';
+        // [title, track, album, playlist name, playlist uri] from the player; the playlist only when the song
+        // plays from one (not from the queue or autoplay). Without the player, [title, album link] from the widget.
+        async nowPlaying() {
+          const p = service('PlayerAPI'), s = p && p.getState(), item = s && s.item;
+          if (!item) {
+            const w = document.querySelector('[data-testid="now-playing-widget"]');
+            const a = w && w.querySelector('a[href*="/album/"]');
+            return a ? JSON.stringify([a.textContent.trim(), a.getAttribute('href')]) : '';
+          }
+          const c = s.context || {}, m = c.metadata || {};
+          let name = '', list = '';
+          if (item.provider === 'context') {
+            // Liked Songs plays as a playlist of Spotify's own; keep the URI the library import uses.
+            if (m.format_list_type === 'liked-songs' || c.uri === p._likedSongsUri) { list = 'spotify:collection:tracks'; name = 'Liked Songs'; }
+            else if (/^spotify:playlist:/.test(c.uri || '')) {
+              list = c.uri;
+              name = m.context_description || '';
+              const pl = service('PlaylistAPI');
+              if (!name && pl) try { name = (await pl.getMetadata(list)).name || ''; } catch (e) { }
+            }
+          }
+          return JSON.stringify([item.name || '', item.uri || '', (item.album && item.album.uri) || '', name, list]);
         }
       };
     })();
@@ -480,15 +523,32 @@ enum SpotifyPage {
         try eval("__sgh.click(\(js(wanted.map { [$0.0, $0.1] as [Any] })))")
     }
 
-    // Plays the track (in the album when given) without bringing Spotify forward. False when the service is missing.
-    static func play(track: String, context: String?) throws -> Bool {
-        try eval("__sgh.play(\(js(track)), \(js(context ?? "")))") == "ok"
+    // Plays the track in the first of the contexts (playlist, album) that has it, else on its own, without
+    // bringing Spotify forward. False when the player service is missing.
+    static func play(track: String, contexts: [String]) throws -> Bool {
+        try eval("__sgh.play(\(js(track)), \(js(contexts)))", timeout: 15) != "no-api"
     }
 
-    static func nowPlaying() throws -> (title: String, albumURI: String)? {
-        let parts = try eval("__sgh.nowPlaying()").components(separatedBy: "\n")
-        guard parts.count == 2, let album = Links.uri(parts[1], kind: "album") else { return nil }
-        return (parts[0], album)
+    struct NowPlaying {
+        var title = "", track = "", album: String?  // track is empty when only the page's widget answered
+        var playlist = "", playlistLink = ""        // empty unless it plays from a playlist or Liked Songs
+    }
+
+    static func nowPlaying() throws -> NowPlaying? { parseNowPlaying(try eval("__sgh.nowPlaying()")) }
+
+    // [title, track uri, album uri, playlist name, playlist uri] from the player, or [title, album link] from the widget.
+    static func parseNowPlaying(_ json: String) -> NowPlaying? {
+        guard let f = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String], f.count >= 2, !f[0].isEmpty else { return nil }
+        if f.count == 2 {
+            guard let album = Links.uri(f[1], kind: "album") else { return nil }
+            return NowPlaying(title: f[0], album: album)
+        }
+        guard f.count >= 5 else { return nil }
+        var now = NowPlaying(title: f[0])
+        if Links.parse(f[1]).track == f[1] { now.track = f[1] }
+        if Links.parse(f[2]).album == f[2] { now.album = f[2] }
+        if Links.isPlaylist(f[4]) { now.playlist = f[3]; now.playlistLink = f[4] }
+        return now
     }
 
     static let changed = "Spotify's page didn't understand this app (Spotify may have changed)."
@@ -505,15 +565,16 @@ enum SpotifyPage {
     static func songs(uri: String, playlist: String) throws -> [Song] {
         let result = try eval("__sgh.songs(\(js(uri)))", timeout: 60)
         if result == "no-api" { throw JumpError(changed) }
-        return parseSongs(result, playlist: playlist)
+        return parseSongs(result, playlist: playlist, playlistLink: uri)
     }
 
-    static func parseSongs(_ json: String, playlist: String) -> [Song] {
+    static func parseSongs(_ json: String, playlist: String, playlistLink: String = "") -> [Song] {
         let rows = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String]] ?? []
+        let link = Links.isPlaylist(playlistLink) ? playlistLink : ""
         return rows.filter { $0.count == 5 && !$0[0].isEmpty }.map {
             Song(title: $0[0], artist: $0[1], album: $0[2],
                  link: Links.make(track: $0[4].hasPrefix("spotify:track:") ? $0[4] : nil, album: $0[3].hasPrefix("spotify:album:") ? $0[3] : nil),
-                 playlist: playlist)
+                 playlist: playlist, playlistLink: link)
         }
     }
 
@@ -676,16 +737,26 @@ enum Player {
             }
             if let track = link.track, Links.safe(track) {
                 let album = link.album.flatMap { Links.safe($0) ? $0 : nil }
-                if page, (try? SpotifyPage.play(track: track, context: album)) == true {
+                // In its playlist, so the rest of the playlist follows, else in its album.
+                let contexts = [song.playlistLink, album ?? ""].filter { !$0.isEmpty }
+                if page, (try? SpotifyPage.play(track: track, contexts: contexts)) == true {
                     try started(before, song.title)
                     return
                 }
                 // Without Jump support: AppleScript can bring Spotify forward, so hand the front back afterwards.
                 let front = NSWorkspace.shared.frontmostApplication
-                var command = "play track \"\(track)\""
-                if let album { command += " in context \"\(album)\"" }
-                Spotify.runSync(command)
                 defer { giveBackFront(front) }
+                // A playlist that no longer has the song starts another one: then the album it is.
+                var playing = false
+                if song.playlistLink.hasPrefix("spotify:playlist:"), Links.safe(song.playlistLink) {
+                    Spotify.runSync("play track \"\(track)\" in context \"\(song.playlistLink)\"")
+                    playing = SpotifyLauncher.waitUntil(2) { Spotify.stateSync()?.id == track }
+                }
+                if !playing {
+                    var command = "play track \"\(track)\""
+                    if let album { command += " in context \"\(album)\"" }
+                    Spotify.runSync(command)
+                }
                 try started(before, song.title)
                 return
             }
@@ -777,10 +848,10 @@ enum PlaylistImport {
         for list in library {
             lists += 1
             progress("Importing \(list.name) (\(lists)/\(library.count))…")
-            // One playlist per turn, so a Jump in the meantime doesn't wait; one retry, since a call occasionally fails.
+            // One playlist per turn, so a Jump in the meantime doesn't wait; one retry, since a call occasionally
+            // fails, inside Spotify's page too (seen once in 92 playlists, fine the next time).
             let songs = try Player.exclusive { () -> [Song] in
                 do { return try SpotifyPage.songs(uri: list.uri, playlist: list.name) }
-                catch let e as JumpError where e.message == SpotifyPage.changed { throw e }
                 catch { return try SpotifyPage.songs(uri: list.uri, playlist: list.name) }
             }
             found += songs.count
@@ -1224,6 +1295,49 @@ enum JumpSelfTest {
               && t.snapshot()[0].link == "spotify:track:U1 spotify:album:H1", "import matches a played song by track ID even when artists are spelled differently")
         t.record(title: "Under Pressure", artist: "Queen, David Bowie", album: "Hot Space", link: "spotify:track:U1", now: 800)
         check(t.count == 1 && t.snapshot()[0].count == 2, "recording matches by track ID too")
+
+        check(Links.isPlaylist("spotify:playlist:P1") && Links.isPlaylist("spotify:collection:tracks") && !Links.isPlaylist("spotify:album:A1")
+              && !Links.isPlaylist("spotify:playlist:") && !Links.isPlaylist(""), "only playlists and Liked Songs are playlist links")
+        let q = History(url: nil)
+        q.record(title: "Lions", artist: "Dire Straits", album: "Dire Straits", link: "spotify:track:L1", now: 500)
+        _ = q.importSongs([
+            Song(title: "Lions", artist: "Dire Straits", album: "Dire Straits", link: "spotify:track:L1 spotify:album:A1", playlist: "Rock", playlistLink: "spotify:playlist:R1"),
+            Song(title: "Jolene", artist: "Pianaura", album: "Piano", link: "spotify:track:J1", playlist: "Liked Songs", playlistLink: "spotify:collection:tracks"),
+            Song(title: "Jolene", artist: "Pianaura", album: "Piano", link: "spotify:track:J1", playlist: "Piano", playlistLink: "spotify:playlist:P1"),
+        ])
+        var s = q.snapshot()
+        check(s.count == 2 && s[0].playlist == "Rock" && s[0].playlistLink == "spotify:playlist:R1", "a played song without a playlist gets the imported one")
+        check(s.count == 2 && s[1].playlist == "Liked Songs" && s[1].playlistLink == "spotify:collection:tracks", "an imported song keeps its first playlist")
+        let saved = History.parse(History.format(s))
+        check(saved.count == 2 && saved[1].playlistLink == "spotify:collection:tracks" && saved[0].playlistLink == "spotify:playlist:R1",
+              "playlist links survive saving")
+        q.record(title: "Jolene", artist: "Pianaura", album: "Piano", link: "spotify:track:J1", now: 600)
+        check(q.snapshot()[0].title == "Jolene" && q.snapshot()[0].playlistLink == "spotify:collection:tracks", "playing it from elsewhere keeps its playlist")
+        q.record(title: "Lions", artist: "Dire Straits, Someone", album: "Dire Straits", link: "spotify:track:L1 spotify:album:X",
+                 playlist: "Road trip", playlistLink: "spotify:playlist:T1", now: 700)
+        s = q.snapshot()
+        check(q.count == 2 && s[0].count == 2 && s[0].link == "spotify:track:L1 spotify:album:A1" && s[0].playlist == "Road trip" && s[0].playlistLink == "spotify:playlist:T1",
+              "playing it from a playlist moves it to that playlist")
+        _ = q.importSongs([Song(title: "Lions", artist: "Dire Straits", album: "Dire Straits", link: "spotify:track:L1", playlist: "Rock", playlistLink: "spotify:playlist:R1")])
+        check(q.snapshot()[0].playlistLink == "spotify:playlist:T1", "importing again doesn't take a song away from where it was played")
+        let old = History(url: nil)
+        _ = old.importSongs([Song(title: "Old", artist: "Import", playlist: "Piano")])
+        _ = old.importSongs([Song(title: "Old", artist: "Import", playlist: "Rock", playlistLink: "spotify:playlist:R1"),
+                             Song(title: "Old", artist: "Import", playlist: "Piano", playlistLink: "spotify:playlist:P1")])
+        check(old.snapshot().first?.playlist == "Piano" && old.snapshot().first?.playlistLink == "spotify:playlist:P1",
+              "re-importing an older history fills in the link of the playlist it already names")
+        let legacy = History.parse("6\t1\tSeven\tColumns\t\tspotify:album:A1\tRock\n7\t1\tBad\tLink\t\t\tX\tnot-a-uri\n")
+        check(legacy.count == 2 && legacy[0].playlist == "Rock" && legacy[0].playlistLink == "" && legacy[1].playlistLink == "",
+              "7-column lines still load; odd playlist links are dropped")
+        let withList = SpotifyPage.parseSongs(#"[["Lions","Dire Straits","Dire Straits","spotify:album:A1","spotify:track:L1"]]"#, playlist: "Rock", playlistLink: "spotify:playlist:R1")
+        check(withList.first?.playlistLink == "spotify:playlist:R1", "imported songs know their playlist's link")
+        let np = SpotifyPage.parseNowPlaying(#"["Lions","spotify:track:L1","spotify:album:A1","Rock","spotify:playlist:R1"]"#)
+        check(np?.title == "Lions" && np?.track == "spotify:track:L1" && np?.album == "spotify:album:A1" && np?.playlist == "Rock" && np?.playlistLink == "spotify:playlist:R1",
+              "the player's now playing parses")
+        check(SpotifyPage.parseNowPlaying(#"["Lions","spotify:track:L1","spotify:album:A1","Lions Radio","spotify:artist:X"]"#)?.playlistLink == "",
+              "playing from something other than a playlist records no playlist")
+        let widget = SpotifyPage.parseNowPlaying(#"["Lions","/album/A1?x"]"#)
+        check(widget?.album == "spotify:album:A1" && widget?.track == "" && SpotifyPage.parseNowPlaying("") == nil, "the widget's now playing still parses")
         check(Player.baseTitle("Riders On The Storm - 2021 Remaster") == "Riders On The Storm"
               && Player.baseTitle("Lions (Live)") == "Lions" && Player.baseTitle("Lions") == "Lions", "base title drops version suffixes")
         check(Player.searchPath("sultans of swing") == "/search/sultans%20of%20swing/tracks", "search path is escaped")
