@@ -118,6 +118,24 @@ Same as Windows, with these Mac-specific details:
 - Manual, by the user:
   - popup over a full-screen app: focus stays, typing works, and the app gets its keys back
 
+## Revision: importing through Spotify's own services (both platforms)
+
+Scrolling through every playlist in Spotify's window was invasive: Spotify visibly navigated, and on Windows its window had to be moved off-screen. A spike (Spotify 1.3.9, macOS) showed a better way through the same debugging port:
+
+- The page's component tree has a `platform` prop (found like the router) whose `getRegistry()` holds Spotify's internal services, keyed by `Symbol(<name>)` in `registry._map`; `registry.resolve(symbol)` returns them.
+- `RootlistAPI.getContents()` lists your playlists (folders nested in `items`, flattened). `PlaylistAPI.getContents(uri)` returns a playlist's songs; `LibraryAPI.getTracks({ limit })` returns Liked Songs. Each song has `name`, `uri` (track), `artists[].name`, `album.name`, `album.uri`, `isLocal`.
+- Measured: 92 playlists + 308 Liked Songs, 12,451 rows, 11,418 distinct songs in 10 s; the largest playlist (1,943 songs) came back whole in one call; Spotify's page didn't change. One call failed once and succeeded on retry, so each playlist is retried once.
+
+So the import no longer navigates, scrolls or needs Spotify rendered:
+
+- The page script's `library()` and `collect()` are replaced by `library()` (rootlist playlists plus Liked Songs as `spotify:collection:tracks`) and `songs(uri)`. Local files and non-tracks are skipped.
+- Artists are joined with ", ", as in Spotify's own row labels and Windows' window title.
+- Windows: `OffScreen`, the router round-trip (`CurrentPath`/`Go` back) and the scrolling helpers are removed. Imported songs keep an empty album name and an `spotify:album:` link, matching what the Windows recorder stores.
+- macOS: imported songs get album name, album and track URIs, so they play through AppleScript like recorded ones. Because AppleScript may spell multiple artists differently than the import, songs are matched by **track URI first**, then by title + artist + album. The anti-throttling launch flags stay for now (playing from an album page while hidden is still untested).
+- Missing services (a Spotify update renamed them) give "Spotify's page didn't understand this app (Spotify may have changed)."
+
+Also fixed: on Windows, `SpotifyPage.AlbumId` only recognised `/album/` URLs, but history links are `spotify:album:<id>`, so every jump fell back to search instead of the album page. It now accepts both.
+
 ## Out of scope
 
 Same as the main spec, plus Accessibility-based UI scripting of any kind.

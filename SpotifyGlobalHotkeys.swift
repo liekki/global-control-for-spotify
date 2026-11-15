@@ -1,4 +1,4 @@
-// Spotify Global Hotkeys for macOS - global hotkeys for Spotify (play/pause, next, previous).
+// Spotify Global Hotkeys for macOS - global hotkeys for Spotify (play/pause, next, previous, volume) and Jump (Jump.swift).
 // Hotkeys come from Carbon's RegisterEventHotKey (no Accessibility permission needed)
 // and are sent to Spotify as Apple Events, so they reach Spotify even when a browser
 // or another app owns the system's Now Playing controls.
@@ -9,14 +9,14 @@ import ServiceManagement
 // MARK: - Actions and hotkey text
 
 enum Action: Int, CaseIterable {
-    case playPause, next, previous, volumeUp, volumeDown
+    case playPause, next, previous, jump, volumeUp, volumeDown
 
-    var key: String { ["PlayPause", "Next", "Previous", "VolumeUp", "VolumeDown"][rawValue] }
-    var label: String { ["Play/Pause", "Next", "Previous", "Volume up", "Volume down"][rawValue] }
-    // Winamp's classic hotkeys, plus Page Up/Down for volume
-    var defaultHotkey: String { ["Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z", "Ctrl+Shift+PageUp", "Ctrl+Shift+PageDown"][rawValue] }
-    var spotifyEvent: String { ["PlPs", "Next", "Prev", "", ""][rawValue] } // from Spotify's scripting dictionary
-    var volumeDelta: Int? { [nil, nil, nil, 10, -10][rawValue] } // Spotify's sound volume is 0...100
+    var key: String { ["PlayPause", "Next", "Previous", "Jump", "VolumeUp", "VolumeDown"][rawValue] }
+    var label: String { ["Play/Pause", "Next", "Previous", "Jump", "Volume up", "Volume down"][rawValue] }
+    // Winamp's classic hotkeys and its J, plus Page Up/Down for volume
+    var defaultHotkey: String { ["Ctrl+Shift+C", "Ctrl+Shift+B", "Ctrl+Shift+Z", "Ctrl+Shift+J", "Ctrl+Shift+PageUp", "Ctrl+Shift+PageDown"][rawValue] }
+    var spotifyEvent: String { ["PlPs", "Next", "Prev", "", "", ""][rawValue] } // from Spotify's scripting dictionary
+    var volumeDelta: Int? { [nil, nil, nil, nil, 10, -10][rawValue] } // Spotify's sound volume is 0...100
 }
 
 struct Hotkey: Equatable {
@@ -135,10 +135,11 @@ enum HotkeyText {
 struct Settings: Equatable {
     var hotkeys: [Action: String]
     var startAtLogin: Bool
+    var startSpotify = false
 }
 
 enum Config {
-    static let startAtLoginKey = "StartAtLogin"
+    static let startAtLoginKey = "StartAtLogin", startSpotifyKey = "StartSpotify"
 
     static var defaultURL: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -179,7 +180,9 @@ enum Config {
         // Missing means a fresh or hand-written file: keep whatever login item state is already in place.
         let start = values[startAtLoginKey.lowercased()]?.lowercased()
         let startAtLogin = start == "true" ? true : start == "false" ? false : loginEnabled
-        return (Settings(hotkeys: hotkeys, startAtLogin: startAtLogin), text == nil || start == nil, warnings)
+        let spotify = values[startSpotifyKey.lowercased()]?.lowercased()
+        return (Settings(hotkeys: hotkeys, startAtLogin: startAtLogin, startSpotify: spotify == "true"),
+                text == nil || start == nil || spotify == nil, warnings)
     }
 
     static func save(_ settings: Settings, to url: URL) throws {
@@ -188,6 +191,8 @@ enum Config {
         for action in Action.allCases { s += "\(action.key)=\(settings.hotkeys[action] ?? "")\n" }
         s += "\n; true or false: launch Spotify Global Hotkeys when you log in.\n"
         s += "\(startAtLoginKey)=\(settings.startAtLogin)\n"
+        s += "\n; true or false: start Spotify with the debugging port Jump uses for albums, search and playlist import (127.0.0.1 only).\n"
+        s += "\(startSpotifyKey)=\(settings.startSpotify)\n"
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try s.write(to: url, atomically: true, encoding: .utf8)
     }
@@ -243,9 +248,51 @@ enum Spotify {
 
     static var isRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty }
 
+    struct State { var playing: Bool; var id, name, artist, album: String }
+
+    private static var scripts: [String: NSAppleScript] = [:] // compiled once; only used on `queue`
+
+    // Runs AppleScript on `queue` (call it from there). Never launches Spotify.
+    @discardableResult
+    static func run(source: String) -> NSAppleEventDescriptor? {
+        guard isRunning else { return nil }
+        let script = scripts[source] ?? NSAppleScript(source: source)
+        scripts[source] = script
+        var error: NSDictionary?
+        let result = script?.executeAndReturnError(&error)
+        if let code = error?[NSAppleScript.errorNumber] as? Int, code == Int(errAEEventNotPermitted) {
+            DispatchQueue.main.async { onPermissionDenied?() }
+        }
+        return error == nil ? result : nil
+    }
+
+    // One command, like "play" or "play track \"spotify:track:…\"", from any background thread.
+    static func runSync(_ command: String) {
+        queue.sync { _ = run(source: "tell application id \"\(bundleID)\" to \(command)") }
+    }
+
+    // What's loaded in Spotify. Call on `queue`; stateSync() from other background threads.
+    static func state() -> State? {
+        let source = """
+            tell application id "\(bundleID)"
+                if player state is stopped then return "stopped"
+                set s to "paused"
+                if player state is playing then set s to "playing"
+                set t to current track
+                return s & linefeed & (id of t) & linefeed & (name of t) & linefeed & (artist of t) & linefeed & (album of t)
+            end tell
+            """
+        guard let text = run(source: source)?.stringValue else { return nil }
+        let f = text.components(separatedBy: "\n")
+        guard f.count >= 5 else { return State(playing: false, id: "", name: "", artist: "", album: "") }
+        return State(playing: f[0] == "playing", id: f[1], name: f[2], artist: f[3], album: f[4...].joined(separator: " "))
+    }
+
+    static func stateSync() -> State? { queue.sync { state() } }
+
     // Does nothing if Spotify isn't running, so a hotkey never launches it.
     static func send(_ action: Action) {
-        guard isRunning else { return }
+        guard isRunning, action != .jump else { return }
         if let delta = action.volumeDelta { changeVolume(by: delta); return }
         // Off the main thread: the first send waits for the user to answer macOS's "control Spotify" prompt.
         queue.async {
@@ -306,11 +353,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var settings = Settings(hotkeys: [:], startAtLogin: false)
     var settingsWindow: SettingsWindowController?
     var warnedAboutPermission = false
+    let history = History(url: History.defaultURL)
+    var recorder: Recorder?
+    lazy var jump: JumpController = {
+        let c = JumpController(history: history)
+        c.onStartSpotify = { [weak self] in self?.restartSpotify() }
+        return c
+    }()
+    var importProgress: String? // non-nil while importing playlists
+    var importItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = menuBarIcon()
         statusItem.button?.toolTip = "Spotify Global Hotkeys"
-        HotkeyCenter.shared.onPress = { Spotify.send($0) }
+        HotkeyCenter.shared.onPress = { [weak self] in self?.perform($0) }
         Spotify.onPermissionDenied = { [weak self] in self?.permissionDenied() }
 
         let loaded = Config.load(from: configURL, loginEnabled: LoginItem.isEnabled)
@@ -318,6 +374,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if loaded.needsSave { save() }
         for warning in loaded.warnings { alert(warning) }
         reportConflicts(apply())
+
+        // Recording is always on, so Jump has songs to offer even while its hotkey is disabled.
+        recorder = Recorder(history: history)
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [history] _ in
+            DispatchQueue.global(qos: .utility).async { history.saveIfDirty() }
+        }
+        if settings.startSpotify {
+            DispatchQueue.global().async {
+                do { try SpotifyLauncher.ensureAtStartup() } catch let e as JumpError { HUD.show(e.message) } catch {}
+            }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        history.saveIfDirty()
+    }
+
+    func perform(_ action: Action) {
+        if action == .jump { jump.toggle() } else { Spotify.send(action) }
     }
 
     // Opening the app again while it runs (Finder, Spotlight, Launchpad) opens Settings,
@@ -338,12 +413,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let hotkey = HotkeyText.parse(text), !HotkeyCenter.shared.register(hotkey, for: action) {
                 failed.append("\(action.label) (\(HotkeyText.display(text)))")
             }
-            let item = NSMenuItem(title: action.label, action: #selector(menuCommand(_:)), keyEquivalent: "")
+            let title = action == .jump ? "Jump…" : action.label
+            let item = NSMenuItem(title: title, action: #selector(menuCommand(_:)), keyEquivalent: "")
             item.tag = action.rawValue
             item.target = self
-            item.attributedTitle = menuTitle(action.label, shortcut: text.isEmpty ? "(none)" : HotkeyText.display(text))
+            item.attributedTitle = menuTitle(title, shortcut: text.isEmpty ? "(none)" : HotkeyText.display(text))
             menu.addItem(item)
         }
+        menu.addItem(.separator())
+        let importItem = NSMenuItem(title: importProgress ?? "Import playlists into Jump", action: importProgress == nil ? #selector(importPlaylists) : nil, keyEquivalent: "")
+        importItem.target = self
+        menu.addItem(importItem)
+        self.importItem = importItem
+        let restart = NSMenuItem(title: "Restart Spotify with Jump support", action: #selector(restartSpotify), keyEquivalent: "")
+        restart.target = self
+        menu.addItem(restart)
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
@@ -369,7 +453,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func menuCommand(_ sender: NSMenuItem) {
-        if let action = Action(rawValue: sender.tag) { Spotify.send(action) }
+        if let action = Action(rawValue: sender.tag) { perform(action) }
+    }
+
+    @objc func restartSpotify() {
+        HUD.show(Spotify.isRunning ? "Restarting Spotify with Jump support…" : "Starting Spotify with Jump support…")
+        DispatchQueue.global().async {
+            do {
+                try SpotifyLauncher.start()
+                HUD.show("Spotify is ready for Jump.")
+            } catch let e as JumpError { HUD.show(e.message) } catch { HUD.show(error.localizedDescription) }
+        }
+    }
+
+    @objc func importPlaylists() {
+        guard importProgress == nil else { return }
+        guard Spotify.isRunning else { alert("Start Spotify first, then import again."); return }
+        setImportProgress("Importing playlists…")
+        DispatchQueue.global().async {
+            var needsRestart = !SpotifyPage.available()
+            if needsRestart {
+                DispatchQueue.main.sync {
+                    NSApp.activate(ignoringOtherApps: true)
+                    let a = NSAlert()
+                    a.messageText = "Importing needs Spotify started with Jump support"
+                    a.informativeText = "Spotify Global Hotkeys will restart Spotify (the music pauses for a few seconds and carries on), then import your playlists and Liked Songs."
+                    a.addButton(withTitle: "Restart Spotify and Import")
+                    a.addButton(withTitle: "Cancel")
+                    needsRestart = a.runModal() == .alertFirstButtonReturn
+                    if !needsRestart { self.setImportProgress(nil) }
+                }
+                if !needsRestart { return }
+            }
+            do {
+                if needsRestart { try SpotifyLauncher.start() }
+                let summary = try PlaylistImport.run(self.history) { text in DispatchQueue.main.async { self.setImportProgress(text) } }
+                DispatchQueue.global(qos: .utility).async { self.history.saveIfDirty() }
+                HUD.show(summary)
+            } catch let e as JumpError { HUD.show("Import stopped: " + e.message) } catch { HUD.show("Import stopped: " + error.localizedDescription) }
+            DispatchQueue.main.async { self.setImportProgress(nil) }
+        }
+    }
+
+    func setImportProgress(_ text: String?) {
+        importProgress = text
+        importItem?.title = text ?? "Import playlists into Jump"
+        importItem?.action = text == nil ? #selector(importPlaylists) : nil
     }
 
     @objc func toggleStartAtLogin() {
@@ -384,7 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Release the hotkeys while recording, otherwise pressing an existing one would trigger it instead.
         HotkeyCenter.shared.unregisterAll()
-        let controller = SettingsWindowController(settings: settings)
+        let controller = SettingsWindowController(settings: settings, history: history)
         controller.onClose = { [weak self] result in
             guard let self else { return }
             if let result {
@@ -463,8 +592,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var result: Settings?
     private var fields: [Action: HotkeyField] = [:]
     private let startAtLogin = NSButton(checkboxWithTitle: "Start at Login", target: nil, action: nil)
+    private let startSpotify = NSButton(checkboxWithTitle: "Start Spotify with Jump support", target: nil, action: nil)
+    private let history: History
 
-    init(settings: Settings) {
+    init(settings: Settings, history: History) {
+        self.history = history
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Spotify Global Hotkeys"
         window.isReleasedWhenClosed = false
@@ -487,6 +619,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         grid.rowAlignment = .firstBaseline
 
         startAtLogin.state = settings.startAtLogin ? .on : .off
+        startSpotify.state = settings.startSpotify ? .on : .off
+        startSpotify.toolTip = "When Spotify Global Hotkeys starts, start Spotify with the debugging port Jump uses for albums, search and playlist import (restarts a Spotify that just opened without it)."
+        let clearHistory = NSButton(title: "Clear History…", target: self, action: #selector(clearHistory))
+        let jumpRow = NSStackView(views: [startSpotify, clearHistory])
+        jumpRow.spacing = 16
 
         let defaults = NSButton(title: "Defaults", target: self, action: #selector(restoreDefaults))
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -497,12 +634,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttons = NSStackView(views: [defaults, spacer, cancel, save])
 
-        let stack = NSStackView(views: [intro, grid, startAtLogin, buttons])
+        let stack = NSStackView(views: [intro, grid, startAtLogin, jumpRow, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         stack.setCustomSpacing(12, after: intro)
+        stack.setCustomSpacing(8, after: startAtLogin)
         buttons.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
 
         window.contentView = stack
@@ -524,6 +662,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func cancel() { window?.close() }
 
+    @objc func clearHistory() {
+        let a = NSAlert()
+        a.messageText = "Forget all \(history.count) songs Jump remembers?"
+        a.addButton(withTitle: "Clear History")
+        a.addButton(withTitle: "Cancel")
+        a.beginSheetModal(for: window!) { [history] response in
+            if response == .alertFirstButtonReturn { DispatchQueue.global().async { history.clear() } }
+        }
+    }
+
     @objc func save() {
         var seen: [String: Action] = [:]
         for action in Action.allCases {
@@ -539,7 +687,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         var hotkeys: [Action: String] = [:]
         for action in Action.allCases { hotkeys[action] = fields[action]!.hotkey }
-        result = Settings(hotkeys: hotkeys, startAtLogin: startAtLogin.state == .on)
+        result = Settings(hotkeys: hotkeys, startAtLogin: startAtLogin.state == .on, startSpotify: startSpotify.state == .on)
         window?.close()
     }
 
@@ -658,21 +806,25 @@ enum SelfTest {
 
         var loaded = Config.load(from: url, loginEnabled: true)
         check(loaded.needsSave && loaded.warnings.isEmpty, "missing file needs save")
-        check(loaded.settings == Settings(hotkeys: [.playPause: "Ctrl+Shift+C", .next: "Ctrl+Shift+B", .previous: "Ctrl+Shift+Z",
-                                                    .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: "Ctrl+Shift+PageDown"], startAtLogin: true), "defaults")
+        check(loaded.settings == Settings(hotkeys: [.playPause: "Ctrl+Shift+C", .next: "Ctrl+Shift+B", .previous: "Ctrl+Shift+Z", .jump: "Ctrl+Shift+J",
+                                                    .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: "Ctrl+Shift+PageDown"], startAtLogin: true, startSpotify: false), "defaults")
 
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? "; comment\n  playpause = cmd+opt+p \nNext=\nPrevious=Hyper+Q\n# other\nstartatlogin=FALSE\n".write(to: url, atomically: true, encoding: .utf8)
+        try? "; comment\n  playpause = cmd+opt+p \nNext=\nPrevious=Hyper+Q\n# other\nstartatlogin=FALSE\nStartSpotify=true\n".write(to: url, atomically: true, encoding: .utf8)
         loaded = Config.load(from: url, loginEnabled: true)
         check(loaded.settings.hotkeys[.playPause] == "Option+Cmd+P", "canonical hotkey, got \(loaded.settings.hotkeys[.playPause] ?? "nil")")
         check(loaded.settings.hotkeys[.next] == "", "empty disables")
         check(loaded.settings.hotkeys[.previous] == "" && loaded.warnings.count == 1, "invalid hotkey warns")
         check(loaded.settings.startAtLogin == false && !loaded.needsSave, "StartAtLogin read")
+        check(loaded.settings.startSpotify && loaded.settings.hotkeys[.jump] == "Ctrl+Shift+J", "StartSpotify read; missing Jump gets its default")
 
-        let settings = Settings(hotkeys: [.playPause: "F8", .next: "Ctrl+Option+Right", .previous: "", .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: ""], startAtLogin: true)
+        let settings = Settings(hotkeys: [.playPause: "F8", .next: "Ctrl+Option+Right", .previous: "", .jump: "", .volumeUp: "Ctrl+Shift+PageUp", .volumeDown: ""],
+                                startAtLogin: true, startSpotify: true)
         do { try Config.save(settings, to: url) } catch { check(false, "save: \(error)") }
         loaded = Config.load(from: url, loginEnabled: false)
         check(loaded.settings == settings && !loaded.needsSave && loaded.warnings.isEmpty, "save/load round-trip")
+
+        JumpSelfTest.run(check)
 
         print(failures == 0 ? "selftest passed" : "selftest: \(failures) failure(s)")
         return failures == 0
@@ -681,14 +833,21 @@ enum SelfTest {
 
 // MARK: - Main
 
-if CommandLine.arguments.contains("--selftest") { exit(SelfTest.run() ? 0 : 1) }
+@main
+enum Main {
+    static var delegate: AppDelegate? // NSApplication holds its delegate weakly
 
-if let id = Bundle.main.bundleIdentifier, NSRunningApplication.runningApplications(withBundleIdentifier: id).count > 1 {
-    exit(0) // already running
+    static func main() {
+        if CommandLine.arguments.contains("--selftest") { exit(SelfTest.run() ? 0 : 1) }
+
+        if let id = Bundle.main.bundleIdentifier, NSRunningApplication.runningApplications(withBundleIdentifier: id).count > 1 {
+            exit(0) // already running
+        }
+
+        let app = NSApplication.shared
+        delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.run()
+    }
 }
-
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-app.run()

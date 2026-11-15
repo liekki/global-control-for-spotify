@@ -169,3 +169,5 @@ Built after the revision above, through the same debugging-port connection:
 - Imported songs get `count = 0`, `lastPlayed = 0` and a seventh column, the first playlist they were seen in. They sort below everything played and show "in <playlist>" in the popup. Re-importing only adds new songs and fills in missing album links. Playing one turns it into a normal entry.
 - Jumps and imports take turns per playlist (`Player.Exclusive`), so a jump during an import waits a few seconds at most.
 - Measured on the author's library: 82 playlists, 3,629 songs (3,334 new) in 88 seconds, Spotify never in front.
+
+Superseded by "Revision: importing through Spotify's own services" in `2026-11-15-macos-jump-design.md`: the import now reads playlists from Spotify's internal services instead of scrolling its window.

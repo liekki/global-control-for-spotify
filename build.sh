@@ -14,7 +14,7 @@ rm -rf "$APP" "$BUILD"
 mkdir -p "$BUILD" "$APP/Contents/MacOS" "$APP/Contents/Resources" dist
 
 for arch in arm64 x86_64; do
-    swiftc -O -swift-version 5 -target "$arch-apple-macos13" -o "$BUILD/$EXE-$arch" SpotifyGlobalHotkeys.swift
+    swiftc -O -swift-version 5 -target "$arch-apple-macos13" -o "$BUILD/$EXE-$arch" SpotifyGlobalHotkeys.swift Jump.swift
 done
 lipo -create -output "$APP/Contents/MacOS/$EXE" "$BUILD/$EXE-arm64" "$BUILD/$EXE-x86_64"
 
@@ -46,7 +46,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSAppleEventsUsageDescription</key><string>Spotify Global Hotkeys sends play/pause, next and previous to Spotify when you press its hotkeys.</string>
+    <key>NSAppleEventsUsageDescription</key><string>Spotify Global Hotkeys sends play/pause, next, previous and Jump's songs to Spotify when you press its hotkeys, and remembers what Spotify plays for Jump.</string>
+    <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>
 </plist>
 EOF

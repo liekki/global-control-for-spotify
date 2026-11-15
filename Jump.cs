@@ -652,14 +652,14 @@ static class SpotifyPage
     static ClientWebSocket socket;
     static int nextId;
 
-    // Installed into the page on demand. Spotify navigates with React Router's history object, which
-    // isn't on window, so find it in React's component tree. Rows on screen before navigating are
+    // Installed into the page on demand; the same script as Jump.swift's. Spotify navigates with React
+    // Router's history object, which isn't on window, so find it in React's component tree; Spotify's
+    // playlist and library services are found the same way. Rows on screen before navigating are
     // marked, so a click can't land on the previous page while the new one renders.
     const string Helper = @"
-if (!window.__sgh || window.__sgh.v !== 3) window.__sgh = (() => {
-  let nav = null;
-  const router = () => {
-    if (nav) return nav;
+if (!window.__sgh || window.__sgh.v !== 5) window.__sgh = (() => {
+  // Depth-first through React's component tree for the first props that pass `test`.
+  const findProps = test => {
     const host = [...document.querySelectorAll('body *')].find(e => Object.keys(e).some(k => k.startsWith('__reactFiber$')));
     if (!host) return null;
     let f = host[Object.keys(host).find(k => k.startsWith('__reactFiber$'))];
@@ -667,65 +667,51 @@ if (!window.__sgh || window.__sgh.v !== 3) window.__sgh = (() => {
     const stack = [f];
     while (stack.length) {
       const x = stack.pop(), p = x.memoizedProps;
-      if (p && p.history && typeof p.history.push === 'function') return nav = p.history;
+      if (p && test(p)) return p;
       if (x.sibling) stack.push(x.sibling);
       if (x.child) stack.push(x.child);
     }
     return null;
   };
+  let nav = null, registry = null;
+  const router = () => {
+    if (!nav) { const p = findProps(p => p.history && typeof p.history.push === 'function'); nav = p && p.history; }
+    return nav;
+  };
+  // Spotify's internal services (playlists, library), registered under Symbol(<name>).
+  const service = name => {
+    if (!registry) { const p = findProps(p => p.platform && typeof p.platform.getRegistry === 'function'); registry = p && p.platform.getRegistry(); }
+    const key = registry && registry._map && [...registry._map.keys()].find(k => typeof k === 'symbol' && k.description === name);
+    return key ? registry.resolve(key) : null;
+  };
   const rows = () => [...document.querySelectorAll('[data-testid=""tracklist-row""] button[aria-label]')];
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const scrollerOf = e => {
-    while (e && !(/(auto|scroll)/.test(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight)) e = e.parentElement;
-    return e;
-  };
-  // Spotify only renders the rows in view, so step through a list and collect as it goes.
-  const scrollAll = async (scroller, grab) => {
-    if (scroller) scroller.scrollTop = 0;
-    await sleep(150); grab();
-    for (let i = 0; scroller && i < 5000 && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 2; i++) {
-      scroller.scrollTop += scroller.clientHeight * 0.8;
-      await sleep(80); grab();
-    }
-    await sleep(200); grab();
-  };
   return {
-    v: 3,
-    path() {
-      const h = router();
-      return h ? h.location.pathname + (h.location.search || '') : '/';
-    },
-    // Every playlist in Your Library, as [uri, name] pairs.
+    v: 5,
+    // Your playlists (folders flattened) and Liked Songs, as [uri, name] pairs.
     async library() {
-      const grid = document.querySelector('[role=""grid""][aria-label=""Your Library""]');
-      if (!grid) return 'no-library';
-      const scroller = scrollerOf(grid), start = scroller ? scroller.scrollTop : 0, seen = new Map();
-      await scrollAll(scroller, () => grid.querySelectorAll('[aria-labelledby^=""listrow-title-spotify:""]').forEach(e => {
-        const id = e.getAttribute('aria-labelledby').split(' ')[0], uri = id.slice('listrow-title-'.length);
-        const title = document.getElementById(id);
-        if (!seen.has(uri)) seen.set(uri, title ? title.textContent.trim() : '');
-      }));
-      if (scroller) scroller.scrollTop = start;
-      return JSON.stringify([...seen]);
+      const root = service('RootlistAPI');
+      if (!root) return 'no-api';
+      const out = [];
+      const walk = items => (items || []).forEach(i => i.type === 'folder' ? walk(i.items) : i.type === 'playlist' && out.push([i.uri, i.name || '']));
+      walk((await root.getContents()).items);
+      if (service('LibraryAPI')) out.push(['spotify:collection:tracks', 'Liked Songs']);
+      return JSON.stringify(out);
     },
-    // The songs on the page just navigated to, as [title, artist, album link] triples.
-    async collect() {
-      const fresh = () => [...document.querySelectorAll('[data-testid=""tracklist-row""]')].filter(r => {
-        const b = r.querySelector('button[aria-label]');
-        return b && !b.dataset.sghOld;
-      });
-      for (let i = 0; i < 60 && !fresh().length; i++) await sleep(100);
-      if (!fresh().length) return '[]';
-      const seen = new Map();
-      await scrollAll(scrollerOf(fresh()[0]), () => fresh().forEach(r => {
-        const row = r.closest('[role=""row""]'), key = row && row.getAttribute('aria-rowindex');
-        const play = r.querySelector('button[aria-label^=""Play ""]'), album = r.querySelector('a[href*=""/album/""]');
-        if (!key || !play || !album || seen.has(key)) return; // podcast episodes and local files have no album
-        const label = play.getAttribute('aria-label').slice(5), by = label.lastIndexOf(' by ');
-        if (by <= 0) return;
-        seen.set(key, [label.slice(0, by), label.slice(by + 4), album.getAttribute('href')]);
-      }));
-      return JSON.stringify([...seen.values()]);
+    // A playlist's (or Liked Songs') songs as [title, artists, album name, album uri, track uri]. No UI involved.
+    async songs(uri) {
+      let items;
+      if (uri === 'spotify:collection:tracks') {
+        const lib = service('LibraryAPI');
+        if (!lib) return 'no-api';
+        const first = await lib.getTracks({ limit: 1 });
+        items = (await lib.getTracks({ limit: Math.max(1, first.totalLength || 0) })).items;
+      } else {
+        const pl = service('PlaylistAPI');
+        if (!pl) return 'no-api';
+        items = (await pl.getContents(uri)).items;
+      }
+      return JSON.stringify((items || []).filter(t => t && t.type === 'track' && !t.isLocal && t.album && t.album.uri)
+        .map(t => [t.name || '', (t.artists || []).map(a => a.name).join(', '), t.album.name || '', t.album.uri, t.uri || '']));
     },
     go(path) {
       const h = router();
@@ -785,8 +771,10 @@ if (!window.__sgh || window.__sgh.v !== 3) window.__sgh = (() => {
         return new NowPlaying { Title = parts[0], Artist = artist, Link = "spotify:album:" + id };
     }
 
+    // From a page link ("/album/<id>?…") or a history link ("spotify:album:<id>").
     public static string AlbumId(string url)
     {
+        if (url != null && url.StartsWith("spotify:album:", StringComparison.Ordinal)) return url.Length > 14 ? url.Substring(14) : null;
         int i = url == null ? -1 : url.IndexOf("/album/", StringComparison.Ordinal);
         if (i < 0) return null;
         string id = url.Substring(i + 7);
@@ -794,27 +782,38 @@ if (!window.__sgh || window.__sgh.v !== 3) window.__sgh = (() => {
         return end >= 0 ? id.Substring(0, end) : id;
     }
 
-    public static string CurrentPath() { return Eval("__sgh.path()"); }
+    public const string Changed = "Spotify's page didn't understand this app (Spotify may have changed).";
 
-    // Your Library's playlists (and Liked Songs) as uri -> name, in library order.
+    // Your playlists (folders flattened) and Liked Songs as uri -> name, in library order.
     public static List<KeyValuePair<string, string>> Library()
     {
-        string result = Eval("__sgh.library()", 60000);
-        if (result == "no-library") throw new JumpException("Open Your Library in Spotify's sidebar, then import again.");
+        string result = Eval("__sgh.library()", 30000);
+        if (result == "no-api") throw new JumpException(Changed);
         var lists = new List<KeyValuePair<string, string>>();
         foreach (object[] pair in (object[])json.DeserializeObject(result))
             lists.Add(new KeyValuePair<string, string>((string)pair[0], (string)pair[1]));
         return lists;
     }
 
-    // The songs on the page Go() just opened. Big playlists take a while: about 3 seconds per 300 songs.
-    public static List<Song> Collect(string playlist)
+    // A playlist's songs, straight from Spotify's playlist service: nothing on screen moves.
+    public static List<Song> Songs(string uri, string playlist)
+    {
+        string result = Eval("__sgh.songs(" + json.Serialize(uri) + ")", 60000);
+        if (result == "no-api") throw new JumpException(Changed);
+        return ParseSongs(result, playlist);
+    }
+
+    // Rows are [title, artists, album name, album uri, track uri]. The album name stays empty, like the
+    // recorder's (the window title has none), so a played and an imported copy are the same song.
+    public static List<Song> ParseSongs(string result, string playlist)
     {
         var songs = new List<Song>();
-        foreach (object[] row in (object[])json.DeserializeObject(Eval("__sgh.collect()", 300000)))
+        foreach (object[] row in (object[])json.DeserializeObject(result))
         {
-            string id = AlbumId((string)row[2]);
-            songs.Add(new Song { Title = (string)row[0], Artist = (string)row[1], Link = id == null ? "" : "spotify:album:" + id, Playlist = playlist });
+            if (row.Length < 4 || (string)row[0] == "") continue;
+            string album = (string)row[3];
+            songs.Add(new Song { Title = (string)row[0], Artist = (string)row[1],
+                Link = album.StartsWith("spotify:album:", StringComparison.Ordinal) ? album : "", Playlist = playlist });
         }
         return songs;
     }
@@ -884,7 +883,7 @@ if (!window.__sgh || window.__sgh.v !== 3) window.__sgh = (() => {
                 var reply = (Dictionary<string, object>)json.DeserializeObject(Encoding.UTF8.GetString(bytes.ToArray()));
                 if (!reply.ContainsKey("id") || (int)reply["id"] != id) continue; // an event, not our answer
                 var outer = (Dictionary<string, object>)reply["result"];
-                if (outer.ContainsKey("exceptionDetails")) throw new JumpException("Spotify's page didn't understand this app (Spotify may have changed).");
+                if (outer.ContainsKey("exceptionDetails")) throw new JumpException(Changed);
                 var result = (Dictionary<string, object>)outer["result"];
                 return result.ContainsKey("value") ? Convert.ToString(result["value"]) : "";
             }
@@ -985,94 +984,36 @@ static class SpotifyLauncher
     }
 }
 
-// While Spotify is minimized or hidden in the tray, Chromium stops rendering it and scrolling loads
-// nothing. For an import, show it without activating it, off-screen and behind everything, then put
-// it back exactly as it was.
-class OffScreen : IDisposable
-{
-    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
-    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] struct WINDOWPLACEMENT { public int length, flags, showCmd; public POINT min, max; public RECT normal; }
-    [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT p);
-    [DllImport("user32.dll")] static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT p);
-    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int cmd);
-    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
-    const int SW_HIDE = 0, SW_SHOWMINIMIZED = 2, SW_SHOWNOACTIVATE = 4, SW_SHOWMINNOACTIVE = 7;
-    const uint SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOACTIVATE = 0x10;
-
-    readonly IntPtr hwnd;
-    readonly bool moved, wasHidden;
-    WINDOWPLACEMENT original;
-
-    public OffScreen(IntPtr hwnd)
-    {
-        this.hwnd = hwnd;
-        wasHidden = !IsWindowVisible(hwnd);
-        if (!wasHidden && !IsIconic(hwnd)) return; // on screen already: it renders, leave it alone
-        original = new WINDOWPLACEMENT();
-        original.length = Marshal.SizeOf(original);
-        GetWindowPlacement(hwnd, ref original);
-        var away = original;
-        int width = original.normal.Right - original.normal.Left, height = original.normal.Bottom - original.normal.Top;
-        away.normal = new RECT { Left = -32000, Top = -32000, Right = -32000 + width, Bottom = -32000 + height };
-        away.showCmd = SW_SHOWNOACTIVATE;
-        away.flags = 0;
-        SetWindowPlacement(hwnd, ref away);
-        SetWindowPos(hwnd, (IntPtr)1 /* HWND_BOTTOM */, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
-        moved = true;
-    }
-
-    public void Dispose()
-    {
-        if (!moved) return;
-        if (original.showCmd == SW_SHOWMINIMIZED) original.showCmd = SW_SHOWMINNOACTIVE;
-        SetWindowPlacement(hwnd, ref original);
-        if (wasHidden) ShowWindow(hwnd, SW_HIDE);
-    }
-}
-
 // Fills the Jump history with the songs in your playlists and Liked Songs, as never-played songs.
+// Reads them from Spotify's own playlist services, so Spotify's window doesn't move, navigate or scroll.
 static class PlaylistImport
 {
     public static string Run(History history, Action<string> progress)
     {
-        IntPtr hwnd = Spotify.MainWindow();
-        if (hwnd == IntPtr.Zero) throw new JumpException("Spotify isn't running.");
+        if (Spotify.MainWindow() == IntPtr.Zero) throw new JumpException("Spotify isn't running.");
         if (!SpotifyPage.Available()) throw new JumpException("Spotify is running without Jump support. Open Jump and press Enter to restart it, then import again.");
 
         int lists = 0, found = 0, added = 0;
-        using (new OffScreen(hwnd))
+        var library = new List<KeyValuePair<string, string>>();
+        Player.Exclusive(delegate { library = SpotifyPage.Library(); });
+        foreach (var list in library)
         {
-            string back = null;
-            var library = new List<KeyValuePair<string, string>>();
-            Player.Exclusive(delegate { back = SpotifyPage.CurrentPath(); library = SpotifyPage.Library(); });
-            var playlists = library.FindAll(l => PagePath(l.Key) != null);
-            foreach (var list in playlists)
+            progress("Importing " + list.Value + " (" + (++lists) + "/" + library.Count + ")");
+            // One playlist per turn, so a Jump in the meantime doesn't wait; one retry, since a call occasionally fails.
+            List<Song> songs = null;
+            Player.Exclusive(delegate
             {
-                progress("Importing " + list.Value + " (" + (++lists) + "/" + playlists.Count + ")");
-                // One playlist at a time, so a Jump in the meantime waits only seconds.
-                List<Song> songs = null;
-                Player.Exclusive(delegate
+                try { songs = SpotifyPage.Songs(list.Key, list.Value); }
+                catch (JumpException e)
                 {
-                    SpotifyPage.Go(PagePath(list.Key));
-                    songs = SpotifyPage.Collect(list.Value);
-                });
-                found += songs.Count;
-                added += history.Import(songs);
-            }
-            Player.Exclusive(delegate { SpotifyPage.Go(back); });
+                    if (e.Message == SpotifyPage.Changed) throw;
+                    songs = SpotifyPage.Songs(list.Key, list.Value);
+                }
+            });
+            found += songs.Count;
+            added += history.Import(songs);
         }
         return "Added " + added + " new songs to Jump (" + found + " songs in " + lists + " playlists).";
-    }
-
-    // Playlists and Liked Songs; albums, artists and podcasts in the library are left out.
-    public static string PagePath(string uri)
-    {
-        if (uri.StartsWith("spotify:playlist:", StringComparison.Ordinal)) return "/playlist/" + uri.Substring(17);
-        if (uri == "spotify:collection" || uri == "spotify:collection:tracks" || uri.EndsWith(":collection", StringComparison.Ordinal)) return "/collection/tracks";
-        return null;
     }
 }
 
@@ -1220,6 +1161,8 @@ static class SelfTest
         Check(Strings.Fold("Communiqué") == "communique", "accents fold away");
         Check(SpotifyPage.AlbumId("https://xpui.app.spotify.com/album/2rCS6Xwx32V27pvgFzLzlT") == "2rCS6Xwx32V27pvgFzLzlT", "album id from link");
         Check(SpotifyPage.AlbumId("https://xpui.app.spotify.com/artist/0WwSkZ7LtFUFjGjMZBMt6T") == null, "artist link has no album id");
+        Check(SpotifyPage.AlbumId("spotify:album:2rCS6Xwx32V27pvgFzLzlT") == "2rCS6Xwx32V27pvgFzLzlT" && SpotifyPage.AlbumId("") == null,
+            "album id from a history link, so jumps open the album page");
 
         long now = 1800000000;
         var songs = new List<Song>
@@ -1279,10 +1222,10 @@ static class SelfTest
                 "playing an imported song makes it a normal one");
             var round = History.Parse(History.Format(imported));
             Check(round[1].Playlist == "Liked Songs" && History.Parse(new[] { "5\t1\tOld\tFormat\t\t" })[0].Playlist == "", "playlist survives saving; old 6-column lines still load");
-            Check(PlaylistImport.PagePath("spotify:playlist:37i9dQZF1F5p3rmiWPIYgZ") == "/playlist/37i9dQZF1F5p3rmiWPIYgZ"
-                && PlaylistImport.PagePath("spotify:user:liekki:collection") == "/collection/tracks"
-                && PlaylistImport.PagePath("spotify:collection:your-episodes") == null
-                && PlaylistImport.PagePath("spotify:album:2rCS6Xwx32V27pvgFzLzlT") == null, "only playlists and Liked Songs are imported");
+            var parsed = SpotifyPage.ParseSongs("[[\"Lions\",\"Dire Straits\",\"Dire Straits\",\"spotify:album:2rCS6Xwx32V27pvgFzLzlT\",\"spotify:track:L1\"],"
+                + "[\"\",\"x\",\"y\",\"spotify:album:A2\",\"\"],[\"Odd\",\"Someone\",\"\",\"not-a-uri\",\"\"]]", "Rock");
+            Check(parsed.Count == 2 && parsed[0].Title == "Lions" && parsed[0].Album == "" && parsed[0].Link == "spotify:album:2rCS6Xwx32V27pvgFzLzlT"
+                && parsed[0].Playlist == "Rock" && parsed[1].Link == "", "imported songs parse; untitled rows and odd URIs are dropped");
         }
         finally { File.Delete(path); }
 
