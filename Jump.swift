@@ -674,10 +674,11 @@ enum SpotifyLauncher {
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: Spotify.bundleID)
         if !running.isEmpty {
             resume = Spotify.stateSync()?.playing == true
+            // Never force it: Spotify can be installing an update as it quits, and killing it then leaves an empty
+            // Spotify.app behind. A minute covers an update; past that, leave Spotify be and say so.
             running.forEach { $0.terminate() }
-            if !waitUntil(10, { !Spotify.isRunning }) {
-                running.forEach { $0.forceTerminate() }
-                _ = waitUntil(5, { !Spotify.isRunning })
+            if !waitUntil(60, { !Spotify.isRunning }) {
+                throw JumpError("Spotify didn't quit, so it couldn't be restarted with Jump support. Quit Spotify yourself and try again.")
             }
         }
 
