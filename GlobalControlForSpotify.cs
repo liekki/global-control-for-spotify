@@ -1,4 +1,4 @@
-// Spotify Global Hotkeys - global hotkeys for Spotify (play/pause, next, previous) and Jump.
+// Global Control for Spotify - global hotkeys for Spotify (play/pause, next, previous) and Jump.
 // The hotkeys send WM_APPCOMMAND straight to Spotify's window, so they work even when
 // another app (browser, game) owns the system media session. Jump keeps a local history
 // of songs played and starts one by driving Spotify's own UI through UI Automation.
@@ -13,7 +13,7 @@ using System.Windows.Forms;
 
 static class Program
 {
-    public const string Name = "Spotify Global Hotkeys", FileName = "SpotifyGlobalHotkeys";
+    public const string Name = "Global Control for Spotify", FileName = "GlobalControlForSpotify";
     public static readonly string Folder = AppDomain.CurrentDomain.BaseDirectory;
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
@@ -22,33 +22,33 @@ static class Program
     static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--selftest") return SelfTest.Run();
+        SetProcessDPIAware();
+        Application.EnableVisualStyles();
+        if (args.Length > 0 && args[0] == "--uninstall") return Install.Uninstall();
+
+        // Settings and Jump history saved under the app's old names carry over to the current names.
+        Install.MoveOldFiles(Folder, Folder);
+        if (Install.ModeFor(Folder, Install.Folder, File.Exists) == StartMode.Ask)
+        {
+            var form = new InstallForm();
+            Application.Run(form);
+            if (!form.RunHere) return 0; // installed (the installed copy is starting) or closed
+        }
 
         bool created;
         using (var mutex = new System.Threading.Mutex(true, FileName + ".SingleInstance", out created))
         {
+            // Started by an update: the old version is on its way out, so wait for it.
+            if (!created && Array.IndexOf(args, "--updated") >= 0)
+            {
+                try { created = mutex.WaitOne(15000); }
+                catch (System.Threading.AbandonedMutexException) { created = true; }
+            }
             if (!created) return 0;
-            SetProcessDPIAware();
-            MigrateFromOldName();
-            Application.EnableVisualStyles();
+            Install.CleanUpAfterUpdate();
             Application.Run(new TrayApp());
         }
         return 0;
-    }
-
-    // Carry settings and Jump history saved under the app's old name over to the current names.
-    static void MigrateFromOldName()
-    {
-        var moves = new[,]
-        {
-            { "Spoco.ini", FileName + ".ini" },
-            { "SpocoHistory.tsv", FileName + "-history.tsv" },
-        };
-        for (int i = 0; i < moves.GetLength(0); i++)
-        {
-            string from = Path.Combine(Folder, moves[i, 0]), to = Path.Combine(Folder, moves[i, 1]);
-            try { if (File.Exists(from) && !File.Exists(to)) File.Move(from, to); }
-            catch (IOException) { } // keep going with defaults rather than not starting
-        }
     }
 
     public static Icon AppIcon(Size size)
@@ -153,8 +153,8 @@ class TrayApp : ApplicationContext
     void InstallUpdate()
     {
         if (update == null || updating) return;
-        // Not installed by the setup (e.g. run from Downloads): the setup would install a second copy, so let the user decide.
-        if (!Updates.Installed || update.Installer == "")
+        // A copy that can't write next to itself (or a release without a Windows download): let the user fetch it.
+        if (!Updates.CanReplace || update.Exe == "")
         {
             Process.Start(update.Page != "" ? update.Page : "https://github.com/" + Updates.Repo + "/releases/latest");
             return;
@@ -167,7 +167,7 @@ class TrayApp : ApplicationContext
         {
             try { Updates.Install(release); }
             catch (Exception) { ui.BeginInvoke((Action)delegate { updating = false; Apply(); }); throw; }
-            // The setup waits for this app to close, then starts the new version.
+            // The new version is starting and waits for this one to quit.
             ui.BeginInvoke((Action)delegate { ExitThread(); });
         });
     }

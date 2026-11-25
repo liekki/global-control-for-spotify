@@ -1254,7 +1254,7 @@ static class Player
     }
 }
 
-// ---------------------------------------------------------------- self-test (SpotifyGlobalHotkeys.exe --selftest)
+// ---------------------------------------------------------------- self-test (GlobalControlForSpotify.exe --selftest)
 
 static class SelfTest
 {
@@ -1396,12 +1396,36 @@ static class SelfTest
             && Updates.ParseVersion("v1.10.0") > Updates.ParseVersion("v1.9.2"), "release tags parse and compare as versions");
         Check(Updates.ParseVersion("v1.5.0-beta") == null && Updates.ParseVersion("latest") == null && Updates.ParseVersion("") == null, "odd tags are ignored");
         Release r = Updates.Parse("{\"tag_name\":\"v1.5.0\",\"html_url\":\"https://github.com/x/y/releases/tag/v1.5.0\",\"draft\":false,\"prerelease\":false,"
-            + "\"assets\":[{\"name\":\"SpotifyGlobalHotkeys.exe\",\"browser_download_url\":\"https://example/exe\"},"
-            + "{\"name\":\"SpotifyGlobalHotkeysSetup.exe\",\"browser_download_url\":\"https://example/setup\"}]}");
-        Check(r != null && r.Version == new Version(1, 5, 0) && r.Installer == "https://example/setup" && r.Page.EndsWith("/v1.5.0"),
-            "the latest release gives its version, page and installer");
-        Check(Updates.Parse("{\"tag_name\":\"v1.6.0\",\"prerelease\":true}") == null && Updates.Parse("{\"tag_name\":\"v1.6.0\"}").Installer == ""
-            && Updates.Parse("[]") == null, "pre-releases are skipped; a release without the installer has none");
+            + "\"assets\":[{\"name\":\"SpotifyGlobalHotkeysSetup.exe\",\"browser_download_url\":\"https://example/setup\"},"
+            + "{\"name\":\"GlobalControlForSpotify.exe\",\"browser_download_url\":\"https://example/exe\"}]}");
+        Check(r != null && r.Version == new Version(1, 5, 0) && r.Exe == "https://example/exe" && r.Page.EndsWith("/v1.5.0"),
+            "the latest release gives its version, page and Windows download (not the old setup)");
+        Check(Updates.Parse("{\"tag_name\":\"v1.6.0\",\"prerelease\":true}") == null && Updates.Parse("{\"tag_name\":\"v1.6.0\"}").Exe == ""
+            && Updates.Parse("[]") == null, "pre-releases are skipped; a release without the exe has none");
+
+        string installed = @"C:\Users\a\AppData\Local\Programs\Global Control for Spotify";
+        Func<string, bool> none = file => false;
+        Check(Install.ModeFor(installed + @"\", installed, none) == StartMode.Run
+            && Install.ModeFor(installed.ToUpperInvariant(), installed, none) == StartMode.Run, "the installed copy just runs");
+        Check(Install.ModeFor(@"C:\Users\a\Downloads", installed, none) == StartMode.Ask, "a copy in Downloads offers to install");
+        Check(Install.ModeFor(@"D:\Tools", installed, file => file == @"D:\Tools\GlobalControlForSpotify.ini") == StartMode.Run,
+            "a copy with settings next to it is portable and just runs");
+
+        string dir = Path.Combine(Path.GetTempPath(), "gcfs-selftest-" + Process.GetCurrentProcess().Id);
+        string from = Path.Combine(dir, "old"), to = Path.Combine(dir, "new");
+        Directory.CreateDirectory(from); Directory.CreateDirectory(to);
+        try
+        {
+            File.WriteAllText(Path.Combine(from, "SpotifyGlobalHotkeys.ini"), "newer");
+            File.WriteAllText(Path.Combine(from, "Spoco.ini"), "oldest");
+            File.WriteAllText(Path.Combine(from, "SpocoHistory.tsv"), "songs");
+            Install.MoveOldFiles(from, to);
+            Check(File.ReadAllText(Path.Combine(to, "GlobalControlForSpotify.ini")) == "newer"
+                && File.ReadAllText(Path.Combine(to, "GlobalControlForSpotify-history.tsv")) == "songs"
+                && File.Exists(Path.Combine(from, "Spoco.ini")), "old settings and history move to the new names; the newer old name wins");
+        }
+        finally { Directory.Delete(dir, true); }
+
         Check(Updates.IsDevelopmentBuild == (Updates.Current == new Version(0, 0, 0)) && (!Updates.IsDevelopmentBuild || !Updates.IsNewer(r)),
             "a development build never offers updates");
 

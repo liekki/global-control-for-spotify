@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration for the Windows release. Paste it into the SignPath project
+     (global-control-for-spotify); this copy is kept here for reference. The release workflow uploads
+     GlobalControlForSpotify.exe as a GitHub artifact (a zip) and passes the release version. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="GlobalControlForSpotify.exe" product-name="Global Control for Spotify" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

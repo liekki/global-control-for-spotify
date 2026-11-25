@@ -9,7 +9,7 @@ struct Release {
 }
 
 enum Updates {
-    static let repo = "liekki/spotify-global-hotkeys", zipName = "SpotifyGlobalHotkeys-macOS.zip"
+    static let repo = "liekki/global-control-for-spotify", zipName = "GlobalControlForSpotify-macOS.zip"
 
     // From Info.plist, which build.sh stamps from APP_VERSION (CI: the release tag). Local builds are 0.0.0.
     static var current: [Int] {
@@ -52,7 +52,7 @@ enum Updates {
         let override = ProcessInfo.processInfo.environment["SGH_UPDATE_URL"] ?? ""
         guard let url = URL(string: override.isEmpty ? "https://api.github.com/repos/\(repo)/releases/latest" : override) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 15)
-        request.setValue("SpotifyGlobalHotkeys", forHTTPHeaderField: "User-Agent") // GitHub requires one
+        request.setValue("GlobalControlForSpotify", forHTTPHeaderField: "User-Agent") // GitHub requires one
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         return parse(try fetch(request))
     }
@@ -83,12 +83,12 @@ enum Updates {
     static func install(_ release: Release) throws {
         guard let url = URL(string: release.zip), !release.zip.isEmpty else { throw JumpError("This release has no Mac download.") }
         let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("SpotifyGlobalHotkeys-update-\(display(release.version))-\(getpid())")
+        let work = fm.temporaryDirectory.appendingPathComponent("GlobalControlForSpotify-update-\(display(release.version))-\(getpid())")
         try? fm.removeItem(at: work)
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
         let zip = work.appendingPathComponent(zipName)
         var request = URLRequest(url: url, timeoutInterval: 120)
-        request.setValue("SpotifyGlobalHotkeys", forHTTPHeaderField: "User-Agent")
+        request.setValue("GlobalControlForSpotify", forHTTPHeaderField: "User-Agent")
         try fetch(request).write(to: zip)
 
         let unzip = Process()
@@ -99,7 +99,7 @@ enum Updates {
         let app = work.appendingPathComponent(Bundle.main.bundleURL.lastPathComponent)
         // Only ever put this same app in place of itself.
         guard unzip.terminationStatus == 0, let id = Bundle(url: app)?.bundleIdentifier, id == Bundle.main.bundleIdentifier else {
-            throw JumpError("The download doesn't look like Spotify Global Hotkeys.")
+            throw JumpError("The download doesn't look like Global Control for Spotify.")
         }
 
         // Keep the old copy until the new one is in place, and put it back if the move fails.

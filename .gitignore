@@ -1,12 +1,18 @@
 # Build outputs (build.cmd regenerates these)
 *.exe
+*.exe.old
+*.exe.new
 app.ico
 dist/
 
 # Per-user settings and Jump history written next to the exe
-SpotifyGlobalHotkeys.ini
-SpotifyGlobalHotkeys-history.tsv*
+GlobalControlForSpotify.ini
+GlobalControlForSpotify-history.tsv*
 
 # macOS build outputs (build.sh regenerates these)
 *.app/
 build/
+
+# Old name (Spotify Global Hotkeys), for testing the move-over
+SpotifyGlobalHotkeys.ini
+SpotifyGlobalHotkeys-history.tsv*

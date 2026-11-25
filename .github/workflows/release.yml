@@ -1,4 +1,6 @@
-# Builds SpotifyGlobalHotkeys.exe, the Windows installer and the macOS app. Pushing a tag like v1.2.3 publishes them as a GitHub release.
+# Builds GlobalControlForSpotify.exe and the macOS app. Pushing a tag like v1.2.3 publishes them as a GitHub release.
+# Once SignPath is set up (repository variable SIGNPATH_ORGANIZATION_ID and secret SIGNPATH_API_TOKEN), tagged builds
+# send the exe to SignPath for signing and wait for the signing request to be approved; until then they're unsigned.
 name: Build
 
 on:
@@ -10,41 +12,67 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      SIGN: ${{ github.ref_type == 'tag' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build SpotifyGlobalHotkeys.exe
+      - name: Build GlobalControlForSpotify.exe
         shell: pwsh
         run: |
           if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:APP_VERSION = $env:GITHUB_REF_NAME.TrimStart('v') }
+          "APP_VERSION=$env:APP_VERSION" >> $env:GITHUB_ENV
           cmd /c build.cmd
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Self-test
         shell: pwsh
         run: |
-          $p = Start-Process .\SpotifyGlobalHotkeys.exe -ArgumentList '--selftest' -NoNewWindow -Wait -PassThru
+          $p = Start-Process .\GlobalControlForSpotify.exe -ArgumentList '--selftest' -NoNewWindow -Wait -PassThru
           exit $p.ExitCode
 
-      - name: Build installer
+      - name: Upload the unsigned exe for signing
+        id: unsigned
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: GlobalControlForSpotify.exe
+
+      # SignPath Foundation requires every signing request to be approved by hand; this waits up to an hour for that.
+      - name: Sign with SignPath
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: global-control-for-spotify
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          parameters: |
+            version: "${{ env.APP_VERSION }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
+      - name: Use the signed exe
+        if: env.SIGN == 'true'
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '0.0.0' }
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc /Qp "/DAppVersion=$version" installer\SpotifyGlobalHotkeys.iss
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item signed\GlobalControlForSpotify.exe . -Force
+          $sig = Get-AuthenticodeSignature .\GlobalControlForSpotify.exe
+          if ($sig.Status -ne 'Valid') { throw "Signature is $($sig.Status)" }
+          "Signed by $($sig.SignerCertificate.Subject)"
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: |
-            SpotifyGlobalHotkeys.exe
-            dist/SpotifyGlobalHotkeysSetup.exe
+          path: GlobalControlForSpotify.exe
 
   macos:
     runs-on: macos-latest
@@ -57,12 +85,12 @@ jobs:
           ./build.sh
 
       - name: Self-test
-        run: '"Spotify Global Hotkeys.app/Contents/MacOS/SpotifyGlobalHotkeys" --selftest'
+        run: '"Global Control for Spotify.app/Contents/MacOS/GlobalControlForSpotify" --selftest'
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/SpotifyGlobalHotkeys-macOS.zip
+          path: dist/GlobalControlForSpotify-macOS.zip
 
   release:
     if: github.ref_type == 'tag'
@@ -71,16 +99,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
+          name: windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         # Re-pushing an existing tag replaces the release's files instead of failing.
         run: |
-          files="dist/SpotifyGlobalHotkeysSetup.exe SpotifyGlobalHotkeys.exe SpotifyGlobalHotkeys-macOS.zip"
+          files="GlobalControlForSpotify.exe GlobalControlForSpotify-macOS.zip"
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --title "Spotify Global Hotkeys $GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --title "Global Control for Spotify $GITHUB_REF_NAME" --generate-notes
           fi

@@ -1,4 +1,4 @@
-// Spotify Global Hotkeys for macOS - global hotkeys for Spotify (play/pause, next, previous, volume) and Jump (Jump.swift).
+// Global Control for Spotify for macOS - global hotkeys for Spotify (play/pause, next, previous, volume) and Jump (Jump.swift).
 // Hotkeys come from Carbon's RegisterEventHotKey (no Accessibility permission needed)
 // and are sent to Spotify as Apple Events, so they reach Spotify even when a browser
 // or another app owns the system's Now Playing controls.
@@ -130,7 +130,7 @@ enum HotkeyText {
     }
 }
 
-// MARK: - Config (SpotifyGlobalHotkeys.ini)
+// MARK: - Config (GlobalControlForSpotify.ini)
 
 struct Settings: Equatable {
     var hotkeys: [Action: String]
@@ -144,7 +144,7 @@ enum Config {
 
     static var defaultURL: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let url = support.appendingPathComponent("Spotify Global Hotkeys", isDirectory: true).appendingPathComponent("SpotifyGlobalHotkeys.ini")
+        let url = support.appendingPathComponent("Global Control for Spotify", isDirectory: true).appendingPathComponent("GlobalControlForSpotify.ini")
         // Carry settings saved under the app's old name over once.
         let old = support.appendingPathComponent("Spoco", isDirectory: true).appendingPathComponent("Spoco.ini")
         if !FileManager.default.fileExists(atPath: url.path), FileManager.default.fileExists(atPath: old.path) {
@@ -188,10 +188,10 @@ enum Config {
     }
 
     static func save(_ settings: Settings, to url: URL) throws {
-        var s = "; Spotify Global Hotkeys. Easiest to change from the menu bar icon: Settings...\n"
+        var s = "; Global Control for Spotify. Easiest to change from the menu bar icon: Settings...\n"
         s += "; Modifiers: Ctrl, Option, Shift, Cmd. Leave empty to disable.\n"
         for action in Action.allCases { s += "\(action.key)=\(settings.hotkeys[action] ?? "")\n" }
-        s += "\n; true or false: launch Spotify Global Hotkeys when you log in.\n"
+        s += "\n; true or false: launch Global Control for Spotify when you log in.\n"
         s += "\(startAtLoginKey)=\(settings.startAtLogin)\n"
         s += "\n; true or false: start Spotify with the debugging port Jump uses for albums, search and playlist import (127.0.0.1 only).\n"
         s += "\(startSpotifyKey)=\(settings.startSpotify)\n"
@@ -245,7 +245,7 @@ final class HotkeyCenter {
 
 enum Spotify {
     static let bundleID = "com.spotify.client"
-    static let queue = DispatchQueue(label: "SpotifyGlobalHotkeys.Spotify")
+    static let queue = DispatchQueue(label: "GlobalControlForSpotify.Spotify")
     static var onPermissionDenied: (() -> Void)?
 
     static func fourCC(_ s: String) -> FourCharCode { s.utf8.reduce(0) { $0 << 8 | FourCharCode($1) } }
@@ -344,8 +344,13 @@ enum LoginItem {
         do {
             if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
-            NSLog("Spotify Global Hotkeys: couldn't change login item: \(error)")
+            NSLog("Global Control for Spotify: couldn't change login item: \(error)")
         }
+    }
+
+    static func reregister() {
+        try? SMAppService.mainApp.unregister()
+        set(true)
     }
 }
 
@@ -371,12 +376,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = menuBarIcon()
-        statusItem.button?.toolTip = "Spotify Global Hotkeys"
+        statusItem.button?.toolTip = "Global Control for Spotify"
         HotkeyCenter.shared.onPress = { [weak self] in self?.perform($0) }
         Spotify.onPermissionDenied = { [weak self] in self?.permissionDenied() }
 
         let loaded = Config.load(from: configURL, loginEnabled: LoginItem.isEnabled)
         settings = loaded.settings
+        // Coming from the old name: the login item still points at the old app, so register this one afresh.
+        if OldName.movedSettings && settings.startAtLogin { LoginItem.reregister() }
         if loaded.needsSave { save() }
         for warning in loaded.warnings { alert(warning) }
         reportConflicts(apply())
@@ -522,7 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         check.target = self
         menu.addItem(check)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Spotify Global Hotkeys", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Global Control for Spotify", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
         return failed
     }
@@ -562,7 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSApp.activate(ignoringOtherApps: true)
                     let a = NSAlert()
                     a.messageText = "Importing needs Spotify started with Jump support"
-                    a.informativeText = "Spotify Global Hotkeys will restart Spotify (the music pauses for a few seconds and carries on), then import your playlists and Liked Songs."
+                    a.informativeText = "Global Control for Spotify will restart Spotify (the music pauses for a few seconds and carries on), then import your playlists and Liked Songs."
                     a.addButton(withTitle: "Restart Spotify and Import")
                     a.addButton(withTitle: "Cancel")
                     needsRestart = a.runModal() == .alertFirstButtonReturn
@@ -627,8 +634,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         warnedAboutPermission = true
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Spotify Global Hotkeys isn't allowed to control Spotify"
-        a.informativeText = "Turn on Spotify under Spotify Global Hotkeys in System Settings → Privacy & Security → Automation, then try the hotkey again."
+        a.messageText = "Global Control for Spotify isn't allowed to control Spotify"
+        a.informativeText = "Turn on Spotify under Global Control for Spotify in System Settings → Privacy & Security → Automation, then try the hotkey again."
         a.addButton(withTitle: "Open System Settings")
         a.addButton(withTitle: "Cancel")
         if a.runModal() == .alertFirstButtonReturn,
@@ -640,7 +647,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func alert(_ text: String) {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Spotify Global Hotkeys"
+        a.messageText = "Global Control for Spotify"
         a.informativeText = text
         a.alertStyle = .warning
         a.runModal()
@@ -684,7 +691,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     init(settings: Settings, history: History) {
         self.history = history
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Spotify Global Hotkeys"
+        window.title = "Global Control for Spotify"
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -707,7 +714,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         startAtLogin.state = settings.startAtLogin ? .on : .off
         startSpotify.state = settings.startSpotify ? .on : .off
         checkForUpdates.state = settings.checkForUpdates ? .on : .off
-        startSpotify.toolTip = "When Spotify Global Hotkeys starts, start Spotify with the debugging port Jump uses for albums, search and playlist import (restarts a Spotify that just opened without it)."
+        startSpotify.toolTip = "When Global Control for Spotify starts, start Spotify with the debugging port Jump uses for albums, search and playlist import (restarts a Spotify that just opened without it)."
         let clearHistory = NSButton(title: "Clear History…", target: self, action: #selector(clearHistory))
         let jumpRow = NSStackView(views: [startSpotify, clearHistory])
         jumpRow.spacing = 16
@@ -865,7 +872,7 @@ final class HotkeyField: NSView {
     }
 }
 
-// MARK: - Self-test (run by CI: SpotifyGlobalHotkeys --selftest)
+// MARK: - Self-test (run by CI: GlobalControlForSpotify --selftest)
 
 enum SelfTest {
     static func run() -> Bool {
@@ -891,7 +898,7 @@ enum SelfTest {
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sgh-selftest-\(getpid())")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let url = dir.appendingPathComponent("SpotifyGlobalHotkeys.ini")
+        let url = dir.appendingPathComponent("GlobalControlForSpotify.ini")
 
         var loaded = Config.load(from: url, loginEnabled: true)
         check(loaded.needsSave && loaded.warnings.isEmpty, "missing file needs save")
@@ -915,7 +922,7 @@ enum SelfTest {
               && [1, 9, 2].lexicographicallyPrecedes(Updates.parseVersion("v1.10.0")!), "release tags parse and compare as versions")
         check(Updates.parseVersion("v1.5.0-beta") == nil && Updates.parseVersion("latest") == nil && Updates.parseVersion("") == nil
               && Updates.parseVersion("1..2") == nil, "odd tags are ignored")
-        let release = Updates.parse(Data(#"{"tag_name":"v1.5.0","html_url":"https://github.com/x/y/releases/tag/v1.5.0","draft":false,"prerelease":false,"assets":[{"name":"SpotifyGlobalHotkeysSetup.exe","browser_download_url":"https://example/setup"},{"name":"SpotifyGlobalHotkeys-macOS.zip","browser_download_url":"https://example/zip"}]}"#.utf8))
+        let release = Updates.parse(Data(#"{"tag_name":"v1.5.0","html_url":"https://github.com/x/y/releases/tag/v1.5.0","draft":false,"prerelease":false,"assets":[{"name":"SpotifyGlobalHotkeys-macOS.zip","browser_download_url":"https://example/old"},{"name":"GlobalControlForSpotify.exe","browser_download_url":"https://example/exe"},{"name":"GlobalControlForSpotify-macOS.zip","browser_download_url":"https://example/zip"}]}"#.utf8))
         check(release?.version == [1, 5, 0] && release?.zip == "https://example/zip" && release?.page.hasSuffix("/v1.5.0") == true,
               "the latest release gives its version, page and Mac download")
         check(Updates.parse(Data(#"{"tag_name":"v1.6.0","prerelease":true}"#.utf8)) == nil && Updates.parse(Data(#"{"tag_name":"v1.6.0"}"#.utf8))?.zip == ""
@@ -928,10 +935,53 @@ enum SelfTest {
         loaded = Config.load(from: url, loginEnabled: false)
         check(loaded.settings == settings && !loaded.needsSave && loaded.warnings.isEmpty, "save/load round-trip")
 
+        // Moving over from the old name: the folder moves and its files get the new names; an existing new folder wins.
+        let support = dir.appendingPathComponent("support", isDirectory: true)
+        let oldFolder = support.appendingPathComponent(OldName.folder, isDirectory: true)
+        let newFolder = support.appendingPathComponent("Global Control for Spotify", isDirectory: true)
+        try? FileManager.default.createDirectory(at: oldFolder, withIntermediateDirectories: true)
+        try? "StartAtLogin=true\n".write(to: oldFolder.appendingPathComponent("SpotifyGlobalHotkeys.ini"), atomically: true, encoding: .utf8)
+        try? "1\t1\tLions\tDire Straits\n".write(to: oldFolder.appendingPathComponent("SpotifyGlobalHotkeys-history.tsv"), atomically: true, encoding: .utf8)
+        check(OldName.migrateSettings(support: support) && !FileManager.default.fileExists(atPath: oldFolder.path)
+              && (try? String(contentsOf: newFolder.appendingPathComponent("GlobalControlForSpotify.ini"), encoding: .utf8)) == "StartAtLogin=true\n"
+              && FileManager.default.fileExists(atPath: newFolder.appendingPathComponent("GlobalControlForSpotify-history.tsv").path),
+              "old settings folder moves to the new name")
+        try? FileManager.default.createDirectory(at: oldFolder, withIntermediateDirectories: true)
+        check(!OldName.migrateSettings(support: support) && FileManager.default.fileExists(atPath: oldFolder.path), "an existing new folder is left alone")
+
         JumpSelfTest.run(check)
 
         print(failures == 0 ? "selftest passed" : "selftest: \(failures) failure(s)")
         return failures == 0
+    }
+}
+
+// MARK: - Moving over from the old name (Spotify Global Hotkeys)
+
+enum OldName {
+    static let app = "Spotify Global Hotkeys.app", folder = "Spotify Global Hotkeys"
+    static let files = [("SpotifyGlobalHotkeys.ini", "GlobalControlForSpotify.ini"),
+                        ("SpotifyGlobalHotkeys-history.tsv", "GlobalControlForSpotify-history.tsv")]
+    static var movedSettings = false
+
+    // Moves the old settings folder to the new one and renames the files in it, unless the new folder exists already.
+    // Returns whether it moved anything.
+    static func migrateSettings(support: URL) -> Bool {
+        let fm = FileManager.default
+        let old = support.appendingPathComponent(folder, isDirectory: true)
+        let new = support.appendingPathComponent("Global Control for Spotify", isDirectory: true)
+        guard fm.fileExists(atPath: old.path), !fm.fileExists(atPath: new.path), (try? fm.moveItem(at: old, to: new)) != nil else { return false }
+        for (from, to) in files {
+            try? fm.moveItem(at: new.appendingPathComponent(from), to: new.appendingPathComponent(to))
+        }
+        return true
+    }
+
+    // The old app in Applications would otherwise linger (and start the old version from Spotlight).
+    static func trashOldApp() {
+        let old = URL(fileURLWithPath: "/Applications").appendingPathComponent(app)
+        guard old.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL, FileManager.default.fileExists(atPath: old.path) else { return }
+        try? FileManager.default.trashItem(at: old, resultingItemURL: nil)
     }
 }
 
@@ -944,9 +994,17 @@ enum Main {
     static func main() {
         if CommandLine.arguments.contains("--selftest") { exit(SelfTest.run() ? 0 : 1) }
 
-        if let id = Bundle.main.bundleIdentifier, NSRunningApplication.runningApplications(withBundleIdentifier: id).count > 1 {
-            exit(0) // already running
+        if let id = Bundle.main.bundleIdentifier {
+            let others = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0 != NSRunningApplication.current }
+            // The same app under its old name (same bundle ID) makes way for this one; any other copy means we're already running.
+            if others.contains(where: { $0.bundleURL?.lastPathComponent != OldName.app }) { exit(0) }
+            for old in others { old.terminate() }
+            let deadline = Date().addingTimeInterval(5)
+            while others.contains(where: { !$0.isTerminated }) && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
         }
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        OldName.movedSettings = OldName.migrateSettings(support: support)
+        OldName.trashOldApp()
 
         let app = NSApplication.shared
         delegate = AppDelegate()

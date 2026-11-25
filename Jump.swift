@@ -113,7 +113,7 @@ final class History {
 
     static var defaultURL: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appendingPathComponent("Spotify Global Hotkeys", isDirectory: true).appendingPathComponent("SpotifyGlobalHotkeys-history.tsv")
+        return support.appendingPathComponent("Global Control for Spotify", isDirectory: true).appendingPathComponent("GlobalControlForSpotify-history.tsv")
     }
 
     init(url: URL?) {
@@ -194,7 +194,7 @@ final class History {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(text.utf8).write(to: url, options: .atomic) // temp file + rename: a crash never leaves half a history
         } catch {
-            NSLog("Spotify Global Hotkeys: couldn't save Jump history: \(error)")
+            NSLog("Global Control for Spotify: couldn't save Jump history: \(error)")
         }
     }
 
